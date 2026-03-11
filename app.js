@@ -1,4 +1,5 @@
-const API_BASE_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
+const DEFAULT_API_BASE_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
+const API_STORAGE_KEY = "stockTrackerApiBaseUrl";
 
 const state = {
   positions: [],
@@ -12,6 +13,9 @@ const tradesBody = document.querySelector("#trades-body");
 const summaryEl = document.querySelector("#summary");
 const refreshBtn = document.querySelector("#refresh");
 const resetFormBtn = document.querySelector("#reset-form");
+const apiForm = document.querySelector("#api-form");
+const apiUrlInput = document.querySelector("#api-url");
+const apiStatus = document.querySelector("#api-status");
 
 const formatNumber = (v) => Number(v || 0).toLocaleString("zh-TW", { maximumFractionDigits: 2 });
 const formatMoney = (v) =>
@@ -21,11 +25,29 @@ const formatMoney = (v) =>
     maximumFractionDigits: 2,
   });
 
+function getApiBaseUrl() {
+  const saved = localStorage.getItem(API_STORAGE_KEY);
+  return (saved || DEFAULT_API_BASE_URL).trim();
+}
+
+function setApiStatus(message, type = "") {
+  apiStatus.textContent = message;
+  apiStatus.className = `api-status ${type}`.trim();
+}
+
+function validateApiBaseUrl(url) {
+  if (!url || url.includes("YOUR_DEPLOYMENT_ID")) {
+    throw new Error("請先設定正確的 Apps Script Web App URL。");
+  }
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}?path=${encodeURIComponent(path)}`, {
+  const apiBaseUrl = getApiBaseUrl();
+  validateApiBaseUrl(apiBaseUrl);
+
+  const response = await fetch(`${apiBaseUrl}?path=${encodeURIComponent(path)}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
       ...(options.headers || {}),
     },
   });
@@ -105,6 +127,19 @@ async function loadData() {
   state.trades = trades;
   renderPositions();
   renderTrades();
+  setApiStatus("連線成功", "success");
+}
+
+async function submitJson(path, payload) {
+  // Apps Script Web App 在某些環境下對 application/json 會觸發 preflight；
+  // 這裡改用 text/plain 避免 CORS 預檢失敗。
+  return api(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8",
+    },
+    body: JSON.stringify(payload),
+  });
 }
 
 positionForm.addEventListener("submit", async (e) => {
@@ -116,30 +151,33 @@ positionForm.addEventListener("submit", async (e) => {
     avgCost: Number(positionForm.avgCost.value),
   };
 
-  await api("positions", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-
-  positionForm.reset();
-  await loadData();
+  try {
+    await submitJson("positions", payload);
+    positionForm.reset();
+    await loadData();
+  } catch (error) {
+    setApiStatus(error.message, "error");
+    alert(error.message);
+  }
 });
 
 tradeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  await api("trades", {
-    method: "POST",
-    body: JSON.stringify({
+  try {
+    await submitJson("trades", {
       symbol: tradeForm.tradeSymbol.value.trim().toUpperCase(),
       shares: Number(tradeForm.tradeShares.value),
       price: Number(tradeForm.tradePrice.value),
       buyTime: new Date(tradeForm.tradeTime.value).toISOString(),
-    }),
-  });
+    });
 
-  tradeForm.reset();
-  await loadData();
+    tradeForm.reset();
+    await loadData();
+  } catch (error) {
+    setApiStatus(error.message, "error");
+    alert(error.message);
+  }
 });
 
 positionsBody.addEventListener("click", async (e) => {
@@ -155,18 +193,33 @@ positionsBody.addEventListener("click", async (e) => {
   }
 
   if (button.dataset.action === "delete") {
-    await api("positions/delete", {
-      method: "POST",
-      body: JSON.stringify({ symbol }),
-    });
+    try {
+      await submitJson("positions/delete", { symbol });
+      await loadData();
+    } catch (error) {
+      setApiStatus(error.message, "error");
+      alert(error.message);
+    }
+  }
+});
+
+apiForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const value = apiUrlInput.value.trim();
+  localStorage.setItem(API_STORAGE_KEY, value);
+  try {
     await loadData();
+  } catch (error) {
+    setApiStatus(error.message, "error");
   }
 });
 
 resetFormBtn.addEventListener("click", () => positionForm.reset());
-refreshBtn.addEventListener("click", loadData);
+refreshBtn.addEventListener("click", () => {
+  loadData().catch((error) => setApiStatus(error.message, "error"));
+});
 
+apiUrlInput.value = getApiBaseUrl();
 loadData().catch((error) => {
-  console.error(error);
-  alert("載入失敗，請確認 app.js 的 API_BASE_URL 與 Apps Script 權限設定。");
+  setApiStatus(error.message, "error");
 });

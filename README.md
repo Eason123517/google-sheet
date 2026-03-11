@@ -31,13 +31,9 @@
 
 ### 3) 設定前端 API
 
-打開 `app.js`，將：
+你可以直接在頁面上方的「API 設定」貼上 Web App URL，按「儲存並測試連線」。
 
-```js
-const API_BASE_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec";
-```
-
-改成你的 Web App URL。
+> 系統會將 URL 存在瀏覽器 `localStorage`，不用每次重填。
 
 ### 4) 啟動前端
 
@@ -55,3 +51,11 @@ python3 -m http.server 8080
   - 台股：`2330.TW`
   - 美股：`AAPL`
 - 目前幣別以 USD 顯示（你可自行調整 `app.js` 的 `currency`）。
+
+
+## 常見問題
+
+- 若出現「載入失敗」，請確認：
+  1. Apps Script 已重新部署最新版。
+  2. 部署權限為「任何知道連結的人」。
+  3. 前端 API URL 為 `/exec` 結尾。

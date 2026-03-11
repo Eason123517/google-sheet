@@ -13,6 +13,20 @@
     </header>
 
     <main class="container grid">
+
+      <section class="card full-width">
+        <h2>API 設定（第一次使用必填）</h2>
+        <form id="api-form" class="form-grid">
+          <label>
+            Apps Script Web App URL
+            <input id="api-url" name="apiUrl" placeholder="https://script.google.com/macros/s/.../exec" required />
+          </label>
+          <div class="button-row">
+            <button type="submit">儲存並測試連線</button>
+            <span id="api-status" class="api-status"></span>
+          </div>
+        </form>
+      </section>
       <section class="card">
         <h2>新增/修改持股</h2>
         <form id="position-form" class="form-grid">
@@ -110,7 +124,7 @@
 
     <footer class="container">
       <p>
-        使用前請在 <code>app.js</code> 設定你的 Google Apps Script 網址。資料將儲存在 Google
+        請先在「API 設定」貼上 Apps Script Web App URL（部署為任何知道連結的人可存取）。資料會儲存在 Google
         Sheet。
       </p>
     </footer>
