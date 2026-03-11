@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>股票管理系統</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="container hero">
+      <div>
+        <h1>股票管理系統</h1>
+        <p>交易紀錄、持股統計、投資總覽、歷史查詢與圖表分析</p>
+      </div>
+      <div class="hero-pill">幣值：NTD$</div>
+    </header>
+
+    <main class="container">
+      <nav class="tab-nav" aria-label="主要分頁">
+        <button class="tab-btn active" data-tab="trade">新增交易</button>
+        <button class="tab-btn" data-tab="portfolio">持股列表</button>
+        <button class="tab-btn" data-tab="dashboard">投資總覽</button>
+        <button class="tab-btn" data-tab="history">交易紀錄</button>
+      </nav>
+
+      <section id="tab-trade" class="tab-panel active">
+        <section class="card glass">
+          <h2>1️⃣ 新增交易</h2>
+          <form id="trade-form" class="form-grid two-col">
+            <label>日期<input id="tx-date" type="date" required /></label>
+            <label>股票代號<input id="tx-symbol" placeholder="2330.TW / AAPL" required /></label>
+            <label>股票名稱<input id="tx-name" placeholder="輸入代號後自動帶入，可手動修改" /></label>
+            <label>
+              交易類型
+              <select id="tx-type" required>
+                <option value="BUY">買入</option>
+                <option value="SELL">賣出</option>
+                <option value="CASH_DIV">現金股利</option>
+                <option value="STOCK_DIV">股票股利</option>
+              </select>
+            </label>
+            <label>價格（NTD$）<input id="tx-price" type="number" min="0" step="0.01" required /></label>
+            <label>股數<input id="tx-qty" type="number" min="0" step="0.01" required /></label>
+            <label>手續費（NTD$）<input id="tx-fee" type="number" min="0" step="0.01" value="0" /></label>
+            <label>交易金額（自動計算）<input id="tx-amount" type="number" step="0.01" readonly /></label>
+            <label class="full">備註<input id="tx-note" placeholder="例如：低接、定期定額、除權息" /></label>
+            <button type="submit">送出交易</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>2️⃣ 股票資料庫（stock_list）</h2>
+          <form id="stock-form" class="form-grid two-col">
+            <label>股票代號<input id="stock-symbol" required /></label>
+            <label>股票名稱<input id="stock-name" required /></label>
+            <label>市場<input id="stock-market" placeholder="上市 / 上櫃 / US" /></label>
+            <label>產業<input id="stock-industry" placeholder="科技 / 金融 / ETF" /></label>
+            <button type="submit">新增 / 更新股票資料</button>
+          </form>
+          <div class="table-wrap top-gap">
+            <table>
+              <thead>
+                <tr><th>代號</th><th>名稱</th><th>市場</th><th>產業</th></tr>
+              </thead>
+              <tbody id="stocks-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="tab-portfolio" class="tab-panel">
+        <section class="card">
+          <div class="section-title-row">
+            <h2>3️⃣ 股票損益明細（持股統計）</h2>
+            <button id="refresh-portfolio" class="secondary">手動更新股價</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>股票</th><th>持股</th><th>平均成本</th><th>現價</th><th>成本</th><th>市值</th><th>損益</th><th>報酬率</th>
+                </tr>
+              </thead>
+              <tbody id="portfolio-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="tab-dashboard" class="tab-panel">
+        <section class="card">
+          <h2>5️⃣ 投資總覽 Dashboard</h2>
+          <div class="kpi-grid">
+            <div class="kpi"><span>總投入金額</span><strong id="kpi-invested">NTD$0</strong></div>
+            <div class="kpi"><span>總市值</span><strong id="kpi-market">NTD$0</strong></div>
+            <div class="kpi"><span>總損益</span><strong id="kpi-profit">NTD$0</strong></div>
+            <div class="kpi"><span>總報酬率</span><strong id="kpi-return">0%</strong></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>6️⃣ 交易分析</h2>
+          <div class="kpi-grid">
+            <div class="kpi"><span>勝率</span><strong id="ana-winrate">0%</strong></div>
+            <div class="kpi"><span>平均報酬</span><strong id="ana-avg">0%</strong></div>
+            <div class="kpi"><span>最大回撤</span><strong id="ana-dd">0%</strong></div>
+            <div class="kpi"><span>賣出筆數</span><strong id="ana-count">0</strong></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>8️⃣ 投資分布圖（依產業）</h2>
+          <canvas id="distribution-chart" width="900" height="320"></canvas>
+        </section>
+      </section>
+
+      <section id="tab-history" class="tab-panel">
+        <section class="card">
+          <h2>7️⃣ 歷史交易紀錄查詢</h2>
+          <form id="history-filter" class="form-grid four-col">
+            <label>股票代號<input id="filter-symbol" placeholder="全部可留空" /></label>
+            <label>
+              類型
+              <select id="filter-type">
+                <option value="">全部</option>
+                <option value="BUY">買入</option>
+                <option value="SELL">賣出</option>
+                <option value="CASH_DIV">現金股利</option>
+                <option value="STOCK_DIV">股票股利</option>
+              </select>
+            </label>
+            <label>起始日<input id="filter-start" type="date" /></label>
+            <label>結束日<input id="filter-end" type="date" /></label>
+            <button type="submit">查詢</button>
+          </form>
+
+          <div class="table-wrap top-gap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th><th>代號</th><th>名稱</th><th>類型</th><th>價格</th><th>股數</th><th>手續費</th><th>交易金額</th><th>備註</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="card api-card compact">
+        <h3>API 設定</h3>
+        <form id="api-form" class="api-inline">
+          <input id="api-url" placeholder="https://script.google.com/macros/s/.../exec" required />
+          <button type="submit">儲存</button>
+          <span id="api-status" class="api-status"></span>
+        </form>
+      </section>
+    </main>
+
+    <footer class="container"><p>每 5 分鐘自動更新一次股價，可搭配手動更新按鈕。</p></footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
