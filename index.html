@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>股票追蹤小工具</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="container">
+      <h1>股票追蹤小工具</h1>
+      <p>Google Sheet 當資料庫，清楚掌握持股與損益。</p>
+    </header>
+
+    <main class="container grid">
+      <section class="card">
+        <h2>新增/修改持股</h2>
+        <form id="position-form" class="form-grid">
+          <label>
+            股票代號
+            <input id="symbol" name="symbol" placeholder="例如：2330.TW、AAPL" required />
+          </label>
+          <label>
+            股票名稱（可選）
+            <input id="name" name="name" placeholder="例如：台積電" />
+          </label>
+          <label>
+            持有股數
+            <input id="shares" name="shares" type="number" min="0" step="0.01" required />
+          </label>
+          <label>
+            平均買入價
+            <input id="avgCost" name="avgCost" type="number" min="0" step="0.01" required />
+          </label>
+          <div class="button-row">
+            <button type="submit">儲存持股</button>
+            <button type="button" id="reset-form" class="secondary">清空</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>新增交易紀錄</h2>
+        <form id="trade-form" class="form-grid">
+          <label>
+            股票代號
+            <input id="tradeSymbol" name="tradeSymbol" placeholder="例如：2330.TW" required />
+          </label>
+          <label>
+            買入股數
+            <input id="tradeShares" name="tradeShares" type="number" min="0" step="0.01" required />
+          </label>
+          <label>
+            買入價格
+            <input id="tradePrice" name="tradePrice" type="number" min="0" step="0.01" required />
+          </label>
+          <label>
+            買入時間
+            <input id="tradeTime" name="tradeTime" type="datetime-local" required />
+          </label>
+          <button type="submit">儲存交易</button>
+        </form>
+      </section>
+
+      <section class="card full-width">
+        <div class="section-title-row">
+          <h2>目前持股與即時報價</h2>
+          <button id="refresh" class="secondary">更新報價</button>
+        </div>
+        <div class="summary" id="summary">總損益：$0.00</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代號</th>
+                <th>名稱</th>
+                <th>股數</th>
+                <th>均價</th>
+                <th>現價</th>
+                <th>市值</th>
+                <th>損益</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="positions-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card full-width">
+        <h2>每次買入詳細資訊</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>代號</th>
+                <th>股數</th>
+                <th>價格</th>
+                <th>投入成本</th>
+                <th>現值</th>
+                <th>損益</th>
+              </tr>
+            </thead>
+            <tbody id="trades-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container">
+      <p>
+        使用前請在 <code>app.js</code> 設定你的 Google Apps Script 網址。資料將儲存在 Google
+        Sheet。
+      </p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
