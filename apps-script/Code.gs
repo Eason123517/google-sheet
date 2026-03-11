@@ -4,7 +4,7 @@ const SHEET_NAMES = {
 };
 
 function doGet(e) {
-  const path = (e.parameter.path || '').toLowerCase();
+  const path = getPath(e);
   try {
     if (path === 'positions') {
       return jsonResponse(getPositions());
@@ -19,8 +19,8 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const path = (e.parameter.path || '').toLowerCase();
-  const payload = JSON.parse(e.postData.contents || '{}');
+  const path = getPath(e);
+  const payload = getPayload(e);
 
   try {
     if (path === 'positions') {
@@ -33,6 +33,13 @@ function doPost(e) {
       return jsonResponse({ ok: true });
     }
 
+    if (path === 'positions/delete') {
+      const symbol = String(payload.symbol || '').toUpperCase();
+      if (!symbol) throw new Error('symbol required');
+      deletePosition(symbol);
+      return jsonResponse({ ok: true });
+    }
+
     return jsonResponse({ error: 'Invalid path' }, 400);
   } catch (err) {
     return jsonResponse({ error: err.message }, 500);
@@ -40,7 +47,7 @@ function doPost(e) {
 }
 
 function doDelete(e) {
-  const path = (e.parameter.path || '').toLowerCase();
+  const path = getPath(e);
 
   try {
     if (path.indexOf('positions/') === 0) {
@@ -53,6 +60,15 @@ function doDelete(e) {
   } catch (err) {
     return jsonResponse({ error: err.message }, 500);
   }
+}
+
+function getPath(e) {
+  return String((e && e.parameter && e.parameter.path) || '').toLowerCase();
+}
+
+function getPayload(e) {
+  const content = (e && e.postData && e.postData.contents) || '{}';
+  return JSON.parse(content);
 }
 
 function getOrCreateSheet(name, headers) {

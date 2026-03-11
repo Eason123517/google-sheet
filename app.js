@@ -155,7 +155,10 @@ positionsBody.addEventListener("click", async (e) => {
   }
 
   if (button.dataset.action === "delete") {
-    await api(`positions/${symbol}`, { method: "DELETE" });
+    await api("positions/delete", {
+      method: "POST",
+      body: JSON.stringify({ symbol }),
+    });
     await loadData();
   }
 });
