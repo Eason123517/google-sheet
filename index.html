@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>股票追蹤小工具</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="container hero">
+      <div>
+        <h1>股票追蹤小工具</h1>
+        <p>Google Sheet 當資料庫，分頁管理「交易紀錄」與「資產儀表板」。</p>
+      </div>
+      <div class="hero-pill">幣值：NTD$</div>
+    </header>
+
+    <main class="container">
+      <nav class="tab-nav" aria-label="主要分頁">
+        <button class="tab-btn active" data-tab="trades">分頁 1：交易紀錄表</button>
+        <button class="tab-btn" data-tab="dashboard">分頁 2：資產儀表板</button>
+      </nav>
+
+      <section id="tab-trades" class="tab-panel active">
+        <section class="card glass">
+          <h2>【交易紀錄表】（輸入區）</h2>
+          <form id="trade-form" class="form-grid two-col">
+            <label>
+              日期
+              <input id="tradeDate" name="tradeDate" type="date" required />
+            </label>
+            <label>
+              標的代碼
+              <input id="tradeSymbol" name="tradeSymbol" placeholder="例如：2330.TW、AAPL" required />
+            </label>
+            <label>
+              動作（買/賣）
+              <select id="tradeAction" name="tradeAction" required>
+                <option value="BUY">買</option>
+                <option value="SELL">賣</option>
+              </select>
+            </label>
+            <label>
+              單價（NTD$）
+              <input id="tradePrice" name="tradePrice" type="number" min="0" step="0.01" required />
+            </label>
+            <label>
+              股數
+              <input id="tradeShares" name="tradeShares" type="number" min="0" step="0.01" required />
+            </label>
+            <label>
+              手續費（NTD$）
+              <input id="tradeFee" name="tradeFee" type="number" min="0" step="0.01" value="0" required />
+            </label>
+            <label class="full">
+              投入總額（NTD$，自動計算）
+              <input id="tradeTotal" name="tradeTotal" type="number" step="0.01" readonly />
+            </label>
+            <button type="submit">儲存交易</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="section-title-row">
+            <h2>交易明細</h2>
+            <button id="refresh-trades" class="secondary">重新整理</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>代碼</th>
+                  <th>動作</th>
+                  <th>單價</th>
+                  <th>股數</th>
+                  <th>手續費</th>
+                  <th>投入總額</th>
+                </tr>
+              </thead>
+              <tbody id="trades-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="tab-dashboard" class="tab-panel">
+        <section class="card">
+          <div class="section-title-row">
+            <h2>【資產儀表板】（決策區）</h2>
+            <button id="refresh-dashboard" class="secondary">更新即時報價</button>
+          </div>
+          <p class="hint">自動抓取交易紀錄，顯示：持有股數、平均成本（損益兩平點）、即時報價、未實現損益。</p>
+          <div class="summary" id="summary">總未實現損益：NTD$0</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>標的代碼</th>
+                  <th>持有股數</th>
+                  <th>平均成本</th>
+                  <th>即時報價</th>
+                  <th>未實現損益</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="card api-card compact">
+        <h3>API 設定</h3>
+        <form id="api-form" class="api-inline">
+          <input id="api-url" name="apiUrl" placeholder="https://script.google.com/macros/s/.../exec" required />
+          <button type="submit">儲存</button>
+          <span id="api-status" class="api-status"></span>
+        </form>
+      </section>
+    </main>
+
+    <footer class="container">
+      <p>請確認 Apps Script 部署權限為「任何知道連結的人」，並使用 `/exec` 結尾 URL。</p>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
