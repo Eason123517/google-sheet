@@ -141,7 +141,16 @@ def load_boxes():
 
 
 def save_boxes(boxes):
-    BOX_DB.write_text(json.dumps(boxes, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        # 🟢 將演算法傳進來的 dict 陣列轉回 Pandas DataFrame
+        updated_df = pd.DataFrame(boxes)
+        
+        # 🟢 直接將完整的最新資料覆蓋更新回 Google Sheets 的 boxes 工作表
+        conn.update(worksheet="boxes", data=updated_df)
+        st.success("✅ 資料庫已成功同步至 Google Sheets！")
+    except Exception as e:
+        st.error(f"❌ 無法寫入雲端資料庫: {e}")
+
 
 
 # =========================================================
