@@ -10,6 +10,23 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
+import pandas as pd
+
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+try:
+    df = conn.read(
+        spreadsheet="https://docs.google.com/spreadsheets/d/1KJntRmxBOLyl1lfEo1Sqi8MS59GNXo12z-ETlkfEX-8/edit?usp=sharing",
+        worksheet="boxes",
+        ttl="0"
+    )
+except Exception as e:
+    # 如果試算表是空的，自動建立一組帶有正確欄位名稱的空表格
+    st.warning("⚠️ 無法讀取雲端資料庫，已為您建立空白暫存表。")
+    df = pd.DataFrame(columns=["box_name", "length", "width", "height"])
+
+st.dataframe(df)
+
 
 APP_DIR = Path(__file__).resolve().parent
 
