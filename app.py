@@ -41,18 +41,34 @@ df = conn.read(
     ttl="0"
 )
 
-# 將新箱型轉成 DataFrame 格式
-new_data = pd.DataFrame([new_box])
+# 1. 確保你的表單輸入元件（例如 text_input, number_input）都在這裡
+# 範例：
+# input_id = st.text_input("箱型 ID")
+# input_name = st.text_input("箱型名稱")
 
-# 🟢 正確的合併寫法：第一個參數必須是 df (對應你從 conn.read 讀出來的變數名)
-updated_df = pd.concat([df, new_data], ignore_index=True)
+# 2. 只有在按下「新增箱型」按鈕時，才執行裡面的程式碼
+if st.button("確認新增箱型"):
+    # 在按鈕內部定義 new_box
+    new_box = {
+        "box_id": input_id,     # 請對應你網頁上的輸入變數名稱
+        "name": input_name,
+        "L": input_l,
+        "W": input_w,
+        "H": input_h,
+        "max_weight": input_weight
+    }
+    
+    # 轉成 DataFrame
+    new_data = pd.DataFrame([new_box])
+    
+    # 與從 Google Sheets 讀出來的 df 合併
+    updated_df = pd.concat([df, new_data], ignore_index=True)
+    
+    # 更新回 Google Sheets
+    conn.update(worksheet="boxes", data=updated_df)
+    st.success("✅ 新箱型已成功同步至 Google Sheets！")
+    st.rerun() # 重新整理網頁畫面以顯示新資料
 
-# 將合併後的完整資料更新回 Google Sheets
-conn.update(
-    worksheet="boxes",
-    data=updated_df
-)
-st.success("✅ 新箱型已成功同步至 Google Sheets！")
 
 # 在網頁上呈現資料
 st.dataframe(df)
