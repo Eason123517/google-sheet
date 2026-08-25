@@ -43,7 +43,7 @@ df = conn.read(
 
 # 假設你把新資料包裝成一筆新的 DataFrame: new_data
 # 將新資料與舊資料合併
-updated_df = pd.concat([df, new_data], ignore_index=True)
+updated_df = pd.concat([df_or_something, new_data], ignore_index=True)
 
 # 寫回 Google Sheets
 conn.update(
