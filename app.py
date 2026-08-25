@@ -41,17 +41,18 @@ df = conn.read(
     ttl="0"
 )
 
-# 假設你把新資料包裝成一筆新的 DataFrame: new_data
-# 將新資料與舊資料合併
-updated_df = pd.concat([df_or_something, new_data], ignore_index=True)
+# 將新箱型轉成 DataFrame 格式
+new_data = pd.DataFrame([new_box])
 
-# 寫回 Google Sheets
+# 🟢 正確的合併寫法：第一個參數必須是 df (對應你從 conn.read 讀出來的變數名)
+updated_df = pd.concat([df, new_data], ignore_index=True)
+
+# 將合併後的完整資料更新回 Google Sheets
 conn.update(
-    spreadsheet="https://google.com",
     worksheet="boxes",
     data=updated_df
 )
-st.success("✅ 箱型資料庫已成功同步至 Google Sheets！")
+st.success("✅ 新箱型已成功同步至 Google Sheets！")
 
 # 在網頁上呈現資料
 st.dataframe(df)
