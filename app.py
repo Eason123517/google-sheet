@@ -25,7 +25,6 @@ except Exception as e:
     st.warning("⚠️ 無法讀取雲端資料庫，已為您建立空白暫存表。")
     df = pd.DataFrame(columns=["box_name", "length", "width", "height"])
 
-st.dataframe(df)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -71,7 +70,6 @@ if st.button("確認新增箱型"):
 
 
 # 在網頁上呈現資料
-st.dataframe(df)
 st.set_page_config(page_title="3D貨物排列系統v1.0", layout="wide")
 
 
@@ -1114,7 +1112,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("📦 3D 智慧貨物排列系統 — MVP 2.8")
+st.title("📦 3D貨物排列系統v1.0")
 st.caption("操作效能改善版：貨物表格改為批次套用，並只執行目前選擇的功能頁面。")
 
 if "item_data" not in st.session_state:
