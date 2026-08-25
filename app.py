@@ -127,16 +127,18 @@ class PackedBox:
 # Box library
 # =========================================================
 def load_boxes():
-    if not BOX_DB.exists():
-        defaults = [
-            {"box_id": "BOX-01", "name": "PMC", "l": 318, "w": 244, "h": 160, "max_weight": 9999},
-            {"box_id": "BOX-S", "name": "小箱", "l": 50, "w": 40, "h": 40, "max_weight": 20},
-            {"box_id": "BOX-M", "name": "中箱", "l": 80, "w": 60, "h": 60, "max_weight": 40},
-        ]
-        BOX_DB.write_text(json.dumps(defaults, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
-        return json.loads(BOX_DB.read_text(encoding="utf-8"))
-    except Exception:
+        # 直接使用先前建立的 conn 連線讀取 Google Sheets
+        df = conn.read(worksheet="boxes", ttl="0")
+
+        # 將欄位名稱統一調整為你演算法中使用的名稱（確保大小寫一致，例如 L/W/H 或 l/w/h）
+        # 如果試算表是小寫 l, w, h，而演算法需要大寫，可以在這裡用 rename 修正：
+        # df = df.rename(columns={"l": "L", "w": "W", "h": "H", "weight": "max_weight"})
+
+        # 轉成 dict 格式陣列回傳給你的演算法
+        return df.to_dict('records')
+    except Exception as e:
+        # 如果讀取失敗，回傳預設的空陣列，防止整頁崩潰
         return []
 
 
