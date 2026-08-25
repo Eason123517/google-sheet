@@ -9,11 +9,36 @@ from collections import Counter, defaultdict
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 
 APP_DIR = Path(__file__).resolve().parent
-BOX_DB = APP_DIR / "boxes.json"
 
-st.set_page_config(page_title="3D 智慧貨物排列系統", layout="wide")
+# 建立 Google Sheets 連線
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# 讀取資料表（填入你剛剛複製的試算表網址）
+# ttl="0" 代表不快取，每次重新整理網頁都會抓最新資料
+df = conn.read(
+    spreadsheet="https://docs.google.com/spreadsheets/d/1KJntRmxBOLyl1lfEo1Sqi8MS59GNXo12z-ETlkfEX-8/edit?usp=sharing",
+    worksheet="boxes",
+    ttl="0"
+)
+
+# 假設你把新資料包裝成一筆新的 DataFrame: new_data
+# 將新資料與舊資料合併
+updated_df = pd.concat([df, new_data], ignore_index=True)
+
+# 寫回 Google Sheets
+conn.update(
+    spreadsheet="https://google.com",
+    worksheet="boxes",
+    data=updated_df
+)
+st.success("✅ 箱型資料庫已成功同步至 Google Sheets！")
+
+# 在網頁上呈現資料
+st.dataframe(df)
+st.set_page_config(page_title="3D貨物排列系統v1.0", layout="wide")
 
 
 # =========================================================
