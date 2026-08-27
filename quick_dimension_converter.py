@@ -11,6 +11,11 @@
 
 固定解讀：
 長 × 寬 × 高 × 數量
+
+v1.13.9：
+- ID 不再當作「前綴」自動加流水號。
+- 使用者輸入 ID=A，該次轉換所有尺寸列的 ID 都是 A。
+- 多次匯入不同 ID 時，由 app.py 將資料往下累加。
 """
 
 from __future__ import annotations
@@ -30,21 +35,22 @@ def _clean_number(value: float):
 
 def parse_dimension_text(
     text: str,
-    id_prefix: str = "CARGO",
+    cargo_id: str = "A",
     name_prefix: str = "貨物",
     agt: str = "",
 ):
     """
     回傳：
       rows: 可直接轉成目前程式 ITEM_COLUMNS 的 dict list
-      errors: [{line, input, reason}, ...]
+      errors: [{行號, 原始內容, 錯誤}, ...]
 
+    同一次轉換的所有 rows 使用完全相同的 cargo_id。
     空白行自動略過。
     """
     rows = []
     errors = []
 
-    prefix = str(id_prefix or "CARGO").strip() or "CARGO"
+    cargo_id = str(cargo_id or "A").strip() or "A"
     name_prefix = str(name_prefix or "貨物").strip() or "貨物"
     agt = str(agt or "").strip()
 
@@ -57,8 +63,7 @@ def parse_dimension_text(
         if not original:
             continue
 
-        # *, x, X, × 全部先轉成空白。
-        # 因此「121 * 102 * 147 * 1」與單純空白分隔皆可處理。
+        # *, x, X, × 全部轉成空白。
         normalized = SEPARATOR_RE.sub(" ", original)
         parts = normalized.split()
 
@@ -120,7 +125,6 @@ def parse_dimension_text(
             continue
 
         valid_index += 1
-        cargo_id = f"{prefix}{valid_index:03d}"
 
         rows.append(
             {

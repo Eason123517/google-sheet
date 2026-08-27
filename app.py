@@ -64,7 +64,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.8", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.9", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -841,6 +841,45 @@ def default_item_dataframe():
     )
 
 
+
+def valid_item_dataframe(df):
+    """
+    移除預設空白列，只保留已有 ID 的貨物資料。
+    用於快速尺寸轉換的累加匯入。
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=ITEM_COLUMNS)
+
+    result = df.reindex(columns=ITEM_COLUMNS).copy()
+    mask = (
+        result["ID"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .ne("")
+    )
+    return result.loc[mask].reset_index(drop=True)
+
+
+def append_item_dataframe(existing_df, new_df):
+    """
+    將新一批貨物往下累加，不覆蓋先前已匯入的 ID / 貨物。
+    """
+    existing = valid_item_dataframe(existing_df)
+    incoming = new_df.reindex(columns=ITEM_COLUMNS).copy()
+
+    if existing.empty:
+        return incoming.reset_index(drop=True)
+
+    if incoming.empty:
+        return existing.reset_index(drop=True)
+
+    return pd.concat(
+        [existing, incoming],
+        ignore_index=True,
+    ).reindex(columns=ITEM_COLUMNS)
+
+
 def parse_csv_bool(value, default=False):
     """CSV 常見布林值轉換：TRUE/FALSE、1/0、是/否、Y/N、勾選/不勾選。"""
     if pd.isna(value) or str(value).strip() == "":
@@ -1200,7 +1239,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.8")
+st.title("✈️ 3D貨物排列系統 v1.13.9")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1223,13 +1262,48 @@ if "_last_selected_aircraft" not in st.session_state:
 with st.sidebar:
     st.header("✈️ 功能選單")
 
+    # 將 radio 選單做成較大的卡片式按鈕，提升辨識度與點選範圍。
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label {
+            border: 1px solid rgba(128, 128, 128, 0.28);
+            border-radius: 12px;
+            padding: 10px 12px;
+            margin-bottom: 7px;
+            background: rgba(128, 128, 128, 0.05);
+            transition: all 0.15s ease-in-out;
+        }
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+            border-color: rgba(255, 75, 75, 0.60);
+            background: rgba(255, 75, 75, 0.07);
+            transform: translateX(2px);
+        }
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+            border-color: rgba(255, 75, 75, 0.95);
+            background: rgba(255, 75, 75, 0.14);
+            box-shadow: 0 0 0 1px rgba(255, 75, 75, 0.12);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     page = st.radio(
         "頁面",
         [
             "🏠 起始頁",
+            "📝 快速尺寸轉換",
             "🧱 貨物資料",
             "🚀 自動裝載",
             "🧰 ULD／箱子管理",
+        ],
+        captions=[
+            "選擇 A333 / B777 與查看機型設定",
+            "貼上尺寸文字，累加不同 ID 貨物",
+            "CSV 匯入、編輯 BUP / AGT / 重量等資料",
+            "執行 3D 裝箱與 B777 盤位計算",
+            "管理 ULD 與 Google Sheets",
         ],
         label_visibility="collapsed",
         key="sidebar_page",
@@ -1356,58 +1430,90 @@ if page == "🏠 起始頁":
 
 
 # =========================================================
-# Page: 貨物資料
+# Page: 快速尺寸轉換
 # =========================================================
-elif page == "🧱 貨物資料":
-    profile = get_aircraft_profile(st.session_state["selected_aircraft"])
-    st.subheader(f"貨物資料｜{profile.code}")
-
-    # -----------------------------------------------------
-    # 快速尺寸文字轉換
-    # -----------------------------------------------------
-    st.markdown("#### 📝 快速尺寸轉換")
+elif page == "📝 快速尺寸轉換":
+    st.subheader("📝 快速尺寸轉換")
 
     st.caption(
-        "直接貼上「長 寬 高 數量」。支援 *、x、X、× 或空白分隔；"
-        "系統會自動解析、檢查錯誤，確認後可直接帶入貨物資料或下載 CSV。"
+        "將「長 × 寬 × 高 × 數量」文字直接轉成貨物資料。"
+        "每次使用一個固定 ID，帶入時會往目前貨物資料下方累加，不會覆蓋前一批。"
     )
 
-    quick_col1, quick_col2, quick_col3 = st.columns([1, 1, 2])
+    # -----------------------------------------------------
+    # 目前已累積貨物
+    # -----------------------------------------------------
+    accumulated_df = valid_item_dataframe(
+        st.session_state["item_data"]
+    )
 
-    with quick_col1:
-        quick_id_prefix = st.text_input(
-            "ID 前綴",
-            value="CARGO",
-            key="quick_dimension_id_prefix",
+    accumulated_rows = len(accumulated_df)
+    accumulated_pieces = (
+        int(accumulated_df["數量"].sum())
+        if not accumulated_df.empty
+        else 0
+    )
+    accumulated_ids = (
+        accumulated_df["ID"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if not accumulated_df.empty
+        else 0
+    )
+
+    a1, a2, a3 = st.columns(3)
+    a1.metric("目前累積 ID 數", int(accumulated_ids))
+    a2.metric("目前累積資料列", accumulated_rows)
+    a3.metric("目前累積總件數", accumulated_pieces)
+
+    st.divider()
+
+    input_col1, input_col2, input_col3 = st.columns([1, 1, 2])
+
+    with input_col1:
+        quick_cargo_id = st.text_input(
+            "ID",
+            value="A",
+            help=(
+                "此 ID 會套用到本次貼上的所有尺寸列，不會自動增加流水號。"
+                "例如輸入 09673823，本次所有尺寸都會使用 ID=09673823。"
+            ),
+            key="quick_dimension_id",
         )
 
-    with quick_col2:
+    with input_col2:
         quick_agt = st.text_input(
             "AGT（選填）",
             value="",
             key="quick_dimension_agt",
         )
 
-    with quick_col3:
-        st.caption(
-            "例如：`121*102*147*1`、`121×102×147×1`、"
-            "`121 102 147 1` 都會解讀為 長×寬×高×數量。"
+    with input_col3:
+        st.info(
+            "支援：`*`、`x`、`X`、`×` 或空白分隔。"
+            "固定解讀為「長 × 寬 × 高 × 數量」。"
         )
 
     quick_dimension_text = st.text_area(
         "貼上尺寸文字",
-        height=190,
+        height=260,
         placeholder=(
             "121*102*147*1\n"
             "120x47x30x1\n"
-            "155 69 53 2"
+            "155X69X53X2\n"
+            "80×120×40×1\n"
+            "100 60 84 1"
         ),
         key="quick_dimension_text",
     )
 
     quick_rows, quick_errors = parse_dimension_text(
         quick_dimension_text,
-        id_prefix=quick_id_prefix,
+        cargo_id=quick_cargo_id,
         name_prefix="貨物",
         agt=quick_agt,
     )
@@ -1425,8 +1531,8 @@ elif page == "🧱 貨物資料":
         )
 
         q1, q2, q3 = st.columns(3)
-        q1.metric("有效資料列", len(quick_rows))
-        q2.metric("總件數", total_quick_pieces)
+        q1.metric("本批有效資料列", len(quick_rows))
+        q2.metric("本批總件數", total_quick_pieces)
         q3.metric("錯誤行", len(quick_errors))
 
         if quick_errors:
@@ -1441,9 +1547,11 @@ elif page == "🧱 貨物資料":
             )
 
         if quick_rows:
-            st.markdown("##### 解析預覽")
+            st.markdown("#### 解析預覽")
+
+            preview_df = quick_df.copy()
             st.dataframe(
-                quick_df,
+                preview_df,
                 use_container_width=True,
                 hide_index=True,
             )
@@ -1453,50 +1561,89 @@ elif page == "🧱 貨物資料":
             ).encode("utf-8-sig")
 
             action_col1, action_col2, action_spacer = st.columns(
-                [1, 1, 2]
+                [1.25, 1, 1.75]
             )
 
             with action_col1:
-                bring_in_disabled = bool(quick_errors)
-
                 if st.button(
-                    "➡️ 帶入貨物資料",
+                    "➕ 帶入貨物資料（累加）",
                     type="primary",
                     use_container_width=True,
-                    disabled=bring_in_disabled,
+                    disabled=bool(quick_errors),
                     key="quick_dimension_apply",
                 ):
-                    st.session_state["item_data"] = quick_df.copy()
+                    combined_df = append_item_dataframe(
+                        st.session_state["item_data"],
+                        quick_df,
+                    )
+
+                    st.session_state["item_data"] = combined_df
                     st.session_state["item_editor_version"] += 1
                     st.session_state.pop("last_item_csv_hash", None)
                     invalidate_packing_result()
-                    st.session_state["quick_dimension_import_success"] = (
-                        f"已帶入 {len(quick_df)} 筆、"
-                        f"共 {total_quick_pieces} 件貨物。"
+
+                    st.session_state[
+                        "quick_dimension_import_success"
+                    ] = (
+                        f"ID {quick_cargo_id} 已累加 "
+                        f"{len(quick_df)} 筆 / {total_quick_pieces} 件。"
+                        f"目前總件數 {int(combined_df['數量'].sum())} 件。"
                     )
                     st.rerun()
 
             with action_col2:
+                safe_file_id = re.sub(
+                    r"[^0-9A-Za-z_-]+",
+                    "_",
+                    str(quick_cargo_id).strip() or "A",
+                )
                 st.download_button(
-                    "⬇️ 下載 CSV",
+                    "⬇️ 下載本批 CSV",
                     data=csv_bytes,
-                    file_name="貨物尺寸轉換.csv",
+                    file_name=f"{safe_file_id}_貨物.csv",
                     mime="text/csv",
                     use_container_width=True,
                     disabled=bool(quick_errors),
                     key="quick_dimension_download",
                 )
 
-    if st.session_state.pop("quick_dimension_import_success", None) is not None:
-        # 使用 pop 後再從前一次訊息安全顯示。
-        # 這裡重新計算目前帶入筆數即可。
-        current_df = st.session_state["item_data"]
-        st.success(
-            f"尺寸資料已帶入下方貨物表格，共 {len(current_df)} 筆、"
-            f"{int(current_df['數量'].sum())} 件。"
-        )
+    flash_message = st.session_state.pop(
+        "quick_dimension_import_success",
+        None,
+    )
+    if flash_message:
+        st.success(flash_message)
 
-    st.divider()
+        current_df = valid_item_dataframe(
+            st.session_state["item_data"]
+        )
+        current_csv = current_df.to_csv(
+            index=False,
+        ).encode("utf-8-sig")
+
+        download_col, spacer_col = st.columns([1, 3])
+        with download_col:
+            st.download_button(
+                "⬇️ 下載目前全部貨物 CSV",
+                data=current_csv,
+                file_name="目前全部貨物.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="quick_dimension_download_all",
+            )
+
+    st.info(
+        "累加範例：先以 ID=09673823 帶入 5 件，再改為 ID=90138473 帶入 10 件，"
+        "貨物資料會保留兩組 ID，總件數累加為 15 件。"
+    )
+
+
+# =========================================================
+# Page: 貨物資料
+# =========================================================
+elif page == "🧱 貨物資料":
+    profile = get_aircraft_profile(st.session_state["selected_aircraft"])
+    st.subheader(f"貨物資料｜{profile.code}")
 
     st.markdown("#### CSV 匯入")
     import_col, import_spacer = st.columns([1, 2])
