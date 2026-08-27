@@ -94,7 +94,7 @@ DEFAULT_BOXES = [
         "name": "96",
         "l": 317.0,
         "w": 243.0,
-        "h": 234.0,
+        "h": 243.0,
         "max_weight": 5000.0,
         "compatible_aircraft": [
             "B777"
@@ -221,6 +221,10 @@ def normalize_box(box: dict[str, Any]) -> dict[str, Any]:
         "center_positions_count": "center_positions",
         "allow_center": "allow_center_load",
         "center_loading": "allow_center_load",
+        "可中央裝載": "allow_center_load",
+        "中央裝載盤位數": "center_positions",
+        "啟用": "enabled",
+        "備註": "notes",
         "active": "enabled",
         "remark": "notes",
     }

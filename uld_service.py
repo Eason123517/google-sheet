@@ -102,6 +102,31 @@ def boxes_to_editor_dataframe(boxes: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=EDITOR_COLUMNS)
 
 
+def _editor_bool(value, default=False) -> bool:
+    """安全解析 data_editor / CSV / Google Sheet 的布林值。"""
+    if value is None:
+        return default
+
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+
+    if isinstance(value, bool):
+        return value
+
+    text = str(value).strip().lower()
+
+    if text in {"1", "true", "yes", "y", "是", "啟用", "on"}:
+        return True
+
+    if text in {"0", "false", "no", "n", "否", "停用", "off", ""}:
+        return False
+
+    return default
+
+
 def editor_dataframe_to_boxes(
     df: pd.DataFrame,
     valid_aircraft_codes: Iterable[str],
@@ -119,7 +144,7 @@ def editor_dataframe_to_boxes(
 
         compatible = _aircraft_list(row.get("適用機型", ""))
         zones = _aircraft_list(row.get("適用區域", ""))
-        allow_center_load = bool(row.get("可中央裝載", False))
+        allow_center_load = _editor_bool(row.get("可中央裝載", False), False)
 
         try:
             center_positions = int(float(row.get("中央裝載盤位數", 2) or 2))
@@ -138,7 +163,7 @@ def editor_dataframe_to_boxes(
                 "compatible_zones": zones,
                 "allow_center_load": allow_center_load,
                 "center_positions": center_positions,
-                "enabled": bool(row.get("啟用", True)),
+                "enabled": _editor_bool(row.get("啟用", True), True),
                 "notes": str(row.get("備註", "") or "").strip(),
             }
         )
@@ -254,7 +279,7 @@ def validate_uld_records(
 
             if abs(float(box.get("h", 0) or 0) - ULD_96_MAX_CARGO_HEIGHT_CM) > 1e-6:
                 errors.append(
-                    f"第 {index} 列（{box_id}）：尾端 96 高度應為 234 cm。"
+                    f"第 {index} 列（{box_id}）：尾端 96 高度應為 243 cm。"
                 )
 
             if bool(box.get("allow_center_load", False)):

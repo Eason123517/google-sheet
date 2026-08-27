@@ -62,7 +62,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.2", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.3", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1196,7 +1196,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.2")
+st.title("✈️ 3D貨物排列系統 v1.13.3")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1469,6 +1469,12 @@ elif page == "🧱 貨物資料":
 # =========================================================
 elif page == "🧰 ULD／箱子管理":
     st.subheader("ULD／箱子管理")
+
+    if st.session_state.pop("uld_save_success", False):
+        st.success(
+            "ULD 資料已同步儲存至 Google Sheets，"
+            "包含「可中央裝載」設定。"
+        )
     st.write(
         "此頁直接管理 Google Sheets 的 ULD／貨箱資料。"
         "新增、修改、刪除並儲存後會同步寫回線上 `boxes` worksheet。"
@@ -1511,6 +1517,8 @@ elif page == "🧰 ULD／箱子管理":
 
     st.caption(
         "上線預設資料來源為 Google Sheets。"
+        "「可中央裝載」會儲存在 Google Sheet 的 allow_center_load 欄位，"
+        "儲存成功後下次開啟程式會直接讀回，不需要重新勾選。"
         "若要在本機暫時改用 boxes.json，可設定環境變數 BOX_STORE_BACKEND=json。"
     )
 
@@ -1521,7 +1529,7 @@ elif page == "🧰 ULD／箱子管理":
         "PGA 單側固定占 2 個 118 盤位、中央固定占 4 個；"
         "118/PGA/114 只能用於上貨艙。"
         "114 規格：310×236、最高 140 cm、只能使用機頭2位＋機尾2位中央專用位置；"
-        "96 為機尾最後方唯一中央專用盤位，尺寸 317×243×234。"
+        "96 為機尾最後方唯一中央專用盤位，尺寸 317×243×243。"
         "因 114 最大載重尚未提供，本版不自行加入 114 到 boxes.json。"
         "新增 114 後會自動套用專用規則。"
     )
@@ -1589,8 +1597,8 @@ elif page == "🧰 ULD／箱子管理":
             else:
                 save_boxes(new_boxes)
                 st.session_state["uld_editor_version"] += 1
+                st.session_state["uld_save_success"] = True
                 invalidate_packing_result()
-                st.success("ULD 資料已同步儲存至 Google Sheets。")
                 st.rerun()
         except Exception as exc:
             st.error(f"無法儲存 ULD 資料：{exc}")
@@ -1747,7 +1755,7 @@ elif page == "🚀 自動裝載":
                                 "114：機頭2＋機尾2中央專用 / 高140"
                                 if str(b["box_id"]).upper() == "114"
                                 else (
-                                    "96：機尾唯一中央專用 / 317×243×234"
+                                    "96：機尾唯一中央專用 / 317×243×243"
                                     if str(b["box_id"]).upper() == "96"
                                     else "一般118等效盤位"
                                 )

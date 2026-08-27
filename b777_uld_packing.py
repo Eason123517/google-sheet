@@ -100,7 +100,7 @@ def build_surface_specs(
 
     - 96：
         只建立 96_TAIL 唯一機尾中央專用位置 surface
-        尺寸固定 317 x 243 x 234 cm
+        尺寸固定 317 x 243 x 243 cm
         不進入一般 118 等效盤位
     """
     specs = []
