@@ -63,7 +63,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.6", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.7", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1096,7 +1096,7 @@ def display_packing_result(packed_boxes, remaining):
                 "BUP ID": b.bup_group or "-",
                 "ULD尺寸": f"{b.box_type.l}×{b.box_type.w}×{b.box_type.h}",
                 "貨物數": len(b.placements),
-                "C.F.": round(total_cf, 2),
+                "C.F.": round(total_cf, 1),
                 "ULD內總重量(kg)": round(total_weight, 2),
                 "空間利用率": f"{used_volume / box_volume * 100:.1f}%",
             }
@@ -1199,7 +1199,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.6")
+st.title("✈️ 3D貨物排列系統 v1.13.7")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1932,7 +1932,7 @@ elif page == "🚀 自動裝載":
                             "Bay": "-".join(load.bays),
                             "占用盤位": ",".join(load.occupied_positions),
                             "貨物數": len(load.placements),
-                            "C.F.": round(total_cf, 2),
+                            "C.F.": round(total_cf, 1),
                             "總重量(kg)": round(total_weight, 2),
                             "Surface長(cm)": round(load.spec.base_length, 2),
                             "Surface寬(cm)": round(load.spec.surface_width, 2),
@@ -2011,14 +2011,17 @@ elif page == "🚀 自動裝載":
                     selected_load
                 )
 
-                # 與 A333 相同：三個尺寸指標緊密排列在 3D 圖下方。
-                mx, my, mz, metric_spacer = st.columns(
-                    [0.72, 0.72, 0.72, 7.84],
+                # 與 A333 相同：尺寸與 C.F. 緊密排列在 3D 圖左下方。
+                current_cf = calculate_cf(selected_load.placements)
+
+                mx, my, mz, mcf, metric_spacer = st.columns(
+                    [0.72, 0.72, 0.72, 0.72, 7.12],
                     gap="small",
                 )
                 mx.metric("目前貨物最大 長", f"{current_max_l:.2f}")
                 my.metric("目前貨物最大 寬", f"{current_max_w:.2f}")
                 mz.metric("目前貨物最大 高", f"{current_max_h:.2f}")
+                mcf.metric("C.F.", f"{current_cf:.1f}")
 
                 st.caption(
                     "最大值以貨物外緣計算："
