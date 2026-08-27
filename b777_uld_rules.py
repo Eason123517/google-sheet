@@ -12,7 +12,7 @@ B777 upper-deck ULD operational rules — v1.10.
    - 前/後位置更精細的 contour 高度資料待補圖後加入。
 4. 118 / PGA / 114 / 96 只允許上貨艙。
 5. 96 為機尾唯一中央專用盤位：
-   - 317 x 243 x 234 cm。
+   - 317 x 243 x 243 cm。
    - 每架 B777 僅 1 個此位置。
    - 位於後方 114 專用位置之後。
    - 不能放在一般 118 等效盤位。
@@ -40,7 +40,7 @@ ULD_114_MAX_CARGO_HEIGHT_CM = 140.0
 
 ULD_96_LENGTH_CM = 317.0
 ULD_96_WIDTH_CM = 243.0
-ULD_96_MAX_CARGO_HEIGHT_CM = 234.0
+ULD_96_MAX_CARGO_HEIGHT_CM = 243.0
 
 
 def normalized_uld_id(value) -> str:
