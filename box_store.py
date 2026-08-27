@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import numbers
 from pathlib import Path
 from typing import Any
 
@@ -185,18 +186,45 @@ def _parse_list(value) -> list[str]:
 
 
 def _parse_bool(value, default=True) -> bool:
+    """統一解析 Google Sheets / pandas / numpy / JSON 布林值。"""
+    if value is None:
+        return default
+
     if isinstance(value, bool):
         return value
 
-    if value is None or value == "":
-        return default
+    try:
+        scalar = value.item()
+        if isinstance(scalar, bool):
+            return scalar
+        if isinstance(scalar, numbers.Number):
+            return bool(int(scalar))
+    except Exception:
+        pass
+
+    if isinstance(value, numbers.Number):
+        try:
+            if value != value:  # NaN
+                return default
+        except Exception:
+            pass
+        return bool(int(value))
 
     text = str(value).strip().lower()
 
-    if text in {"1", "true", "yes", "y", "是", "啟用", "on"}:
+    if text in {"", "nan", "none", "<na>"}:
+        return default
+
+    if text in {
+        "1", "true", "yes", "y", "是", "啟用", "on",
+        "checked", "勾選",
+    }:
         return True
 
-    if text in {"0", "false", "no", "n", "否", "停用", "off"}:
+    if text in {
+        "0", "false", "no", "n", "否", "停用", "off",
+        "unchecked", "未勾選",
+    }:
         return False
 
     return default
@@ -230,7 +258,7 @@ def normalize_box(box: dict[str, Any]) -> dict[str, Any]:
     }
 
     normalized = {
-        aliases.get(str(k), str(k)): v
+        aliases.get(str(k).strip(), str(k).strip()): v
         for k, v in box.items()
     }
 

@@ -1,6 +1,30 @@
-# 3D 貨物排列系統 v1.13.4 — Google Sheets 快取同步修正版
+# 3D 貨物排列系統 v1.13.5 — Google Sheets 布林同步修正版
 
 
+
+
+## v1.13.5 TRUE/FALSE 欄位同步
+
+針對 Google Sheet：
+
+```text
+allow_center_load
+enabled
+```
+
+兩個布林欄位修正。
+
+儲存時直接驗證 `GSheetsConnection.update()` 回傳的 DataFrame，
+不再以「寫入後立即 read」作成功判斷，因此 Google Sheet 已成功更新時不會再出現假失敗。
+
+載入時會清除 read cache，且 ULD `data_editor` 的 widget key 加入 Google Sheet 資料 fingerprint。
+因此 Google Sheet TRUE/FALSE 改變後，重新載入會建立新的 checkbox state。
+
+ULD 管理頁新增：
+
+```text
+↻ 重新載入 Google Sheets
+```
 
 ## v1.13.4 Google Sheets 快取修正
 

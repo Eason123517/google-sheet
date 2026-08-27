@@ -62,7 +62,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.4", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.5", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1196,7 +1196,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.4")
+st.title("✈️ 3D貨物排列系統 v1.13.5")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1472,15 +1472,15 @@ elif page == "🧰 ULD／箱子管理":
 
     if st.session_state.pop("uld_save_success", False):
         st.success(
-            "ULD 資料已同步儲存至 Google Sheets，"
-            "並已重新讀取確認「可中央裝載」等設定。"
+            "ULD 資料已同步儲存至 Google Sheets。"
+            "「可中央裝載」與「啟用」會由 Sheet 最新 TRUE/FALSE 直接讀回。"
         )
     st.write(
         "此頁直接管理 Google Sheets 的 ULD／貨箱資料。"
         "新增、修改、刪除並儲存後會同步寫回線上 `boxes` worksheet。"
     )
 
-    status_col, seed_col = st.columns([2, 1])
+    status_col, reload_col, seed_col = st.columns([1.5, 1, 1])
 
     with status_col:
         if st.button(
@@ -1495,6 +1495,15 @@ elif page == "🧰 ULD／箱子管理":
                     st.error(message)
             except Exception as exc:
                 st.error(f"Google Sheets 連線失敗：{exc}")
+
+    with reload_col:
+        if st.button(
+            "↻ 重新載入 Google Sheets",
+            use_container_width=True,
+        ):
+            st.cache_data.clear()
+            st.session_state["uld_editor_version"] += 1
+            st.rerun()
 
     with seed_col:
         if st.button(
@@ -1537,8 +1546,24 @@ elif page == "🧰 ULD／箱子管理":
     boxes = load_boxes()
     editor_df = boxes_to_editor_dataframe(boxes)
 
+    # Google Sheet 外部被修改時，建立新的 widget state，
+    # 避免 Streamlit 舊 checkbox 狀態蓋掉最新 TRUE/FALSE。
+    uld_source_fingerprint = hashlib.sha1(
+        json.dumps(
+            boxes,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+
+    uld_widget_token = (
+        f"{st.session_state['uld_editor_version']}_"
+        f"{uld_source_fingerprint}"
+    )
+
     with st.form(
-        f"uld_edit_form_{st.session_state['uld_editor_version']}",
+        f"uld_edit_form_{uld_widget_token}",
         clear_on_submit=False,
     ):
         edited_uld_df = st.data_editor(
@@ -1546,7 +1571,7 @@ elif page == "🧰 ULD／箱子管理":
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key=f"uld_editor_{st.session_state['uld_editor_version']}",
+            key=f"uld_editor_{uld_widget_token}",
             column_config={
                 "可中央裝載": st.column_config.CheckboxColumn(
                     "可中央裝載",

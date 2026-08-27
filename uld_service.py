@@ -78,32 +78,8 @@ def get_compatible_ulds(
     return result
 
 
-def boxes_to_editor_dataframe(boxes: list[dict]) -> pd.DataFrame:
-    rows = []
-
-    for box in boxes:
-        rows.append(
-            {
-                "ULD ID": box.get("box_id", ""),
-                "名稱": box.get("name", ""),
-                "長(cm)": float(box.get("l", 0) or 0),
-                "寬(cm)": float(box.get("w", 0) or 0),
-                "高(cm)": float(box.get("h", 0) or 0),
-                "最大載重(kg)": float(box.get("max_weight", 0) or 0),
-                "適用機型": ",".join(_aircraft_list(box.get("compatible_aircraft", []))),
-                "適用區域": ",".join(_aircraft_list(box.get("compatible_zones", []))),
-                "可中央裝載": bool(box.get("allow_center_load", False)),
-                "中央裝載盤位數": int(box.get("center_positions", 2) or 2),
-                "啟用": bool(box.get("enabled", True)),
-                "備註": str(box.get("notes", "") or ""),
-            }
-        )
-
-    return pd.DataFrame(rows, columns=EDITOR_COLUMNS)
-
-
 def _editor_bool(value, default=False) -> bool:
-    """安全解析 data_editor / CSV / Google Sheet 的布林值。"""
+    """安全解析 checkbox / Google Sheets / pandas 布林值。"""
     if value is None:
         return default
 
@@ -116,15 +92,64 @@ def _editor_bool(value, default=False) -> bool:
     if isinstance(value, bool):
         return value
 
+    try:
+        scalar = value.item()
+        if isinstance(scalar, bool):
+            return scalar
+    except Exception:
+        pass
+
     text = str(value).strip().lower()
 
-    if text in {"1", "true", "yes", "y", "是", "啟用", "on"}:
+    if text in {
+        "1", "true", "yes", "y", "是", "啟用", "on",
+        "checked", "勾選",
+    }:
         return True
 
-    if text in {"0", "false", "no", "n", "否", "停用", "off", ""}:
+    if text in {
+        "0", "false", "no", "n", "否", "停用", "off", "",
+        "unchecked", "未勾選",
+    }:
         return False
 
     return default
+
+
+def boxes_to_editor_dataframe(boxes: list[dict]) -> pd.DataFrame:
+    rows = []
+
+    for box in boxes:
+        rows.append(
+            {
+                "ULD ID": box.get("box_id", ""),
+                "名稱": box.get("name", ""),
+                "長(cm)": float(box.get("l", 0) or 0),
+                "寬(cm)": float(box.get("w", 0) or 0),
+                "高(cm)": float(box.get("h", 0) or 0),
+                "最大載重(kg)": float(box.get("max_weight", 0) or 0),
+                "適用機型": ",".join(
+                    _aircraft_list(box.get("compatible_aircraft", []))
+                ),
+                "適用區域": ",".join(
+                    _aircraft_list(box.get("compatible_zones", []))
+                ),
+                "可中央裝載": _editor_bool(
+                    box.get("allow_center_load", False),
+                    False,
+                ),
+                "中央裝載盤位數": int(
+                    box.get("center_positions", 2) or 2
+                ),
+                "啟用": _editor_bool(
+                    box.get("enabled", True),
+                    True,
+                ),
+                "備註": str(box.get("notes", "") or ""),
+            }
+        )
+
+    return pd.DataFrame(rows, columns=EDITOR_COLUMNS)
 
 
 def editor_dataframe_to_boxes(
