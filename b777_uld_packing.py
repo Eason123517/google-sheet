@@ -99,7 +99,7 @@ def build_surface_specs(
         中央裝載規則待後續資料，不自行開放
 
     - 96：
-        只建立 96_TAIL 唯一機尾中央專用位置 surface
+        只建立 96_TAIL 唯一機尾中間專用位置 surface
         尺寸固定 317 x 243 x 243 cm
         不進入一般 118 等效盤位
     """

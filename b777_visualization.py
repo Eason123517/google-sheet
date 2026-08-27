@@ -74,7 +74,7 @@ def make_position_plan_figure(loads):
     - 118 等效盤位維持上下兩列：右側 R / 左側 L。
     - 114 為中央專用位置，因此畫在上下兩列中間並跨越兩列高度，
       不再另外畫第三列，也不標示為左/右側。
-    - 96-T 為機尾唯一中央專用盤位，畫在最右側並跨越兩列高度。
+    - 96-T 為機尾中間唯一專用盤位，畫在最右側並跨越兩列高度。
     """
     fig = go.Figure()
 
@@ -477,9 +477,13 @@ def make_load_3d_figure(load):
         "114專用位置"
         if spec.position_family == "114_SPECIAL"
         else (
-            "中央裝載"
-            if spec.loading_mode == "CENTER"
-            else f"{load.side}側"
+            "機尾中間96專用位置"
+            if spec.position_family == "96_TAIL"
+            else (
+                "中央裝載"
+                if spec.loading_mode == "CENTER"
+                else f"{load.side}側"
+            )
         )
     )
 
@@ -520,7 +524,11 @@ def make_load_cross_section_figure(load, slice_x: float):
                 x=contour_y,
                 y=contour_z,
                 mode="lines",
-                name="114目前固定140cm上限",
+                name=(
+                    "114目前固定140cm上限"
+                    if spec.position_family == "114_SPECIAL"
+                    else f"96盤位高度上限 {spec.nominal_height:.0f}cm"
+                ),
             )
         )
         fig.add_trace(
@@ -560,7 +568,7 @@ def make_load_cross_section_figure(load, slice_x: float):
         surface_label = (
             "114專用位置（頭尾精細輪廓待補）"
             if spec.position_family == "114_SPECIAL"
-            else "尾端96專用位置"
+            else "機尾中間96專用位置"
         )
     elif spec.loading_mode == "CENTER":
         base_y0 = -spec.half_width

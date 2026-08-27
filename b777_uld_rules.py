@@ -11,7 +11,7 @@ B777 upper-deck ULD operational rules — v1.10.
    - 這 4 個位置不能放其他盤。
    - 前/後位置更精細的 contour 高度資料待補圖後加入。
 4. 118 / PGA / 114 / 96 只允許上貨艙。
-5. 96 為機尾唯一中央專用盤位：
+5. 96 為機尾中間唯一專用盤位：
    - 317 x 243 x 243 cm。
    - 每架 B777 僅 1 個此位置。
    - 位於後方 114 專用位置之後。
@@ -92,7 +92,7 @@ def center_118_positions_for_uld(
         return 0
 
     if uid in ULD_96_IDS:
-        # 96 為機尾唯一中央專用盤位，不提供一般中央裝載候選。
+        # 96 為機尾中間唯一專用盤位，不提供一般中央裝載候選。
         return 0
 
     return int(configured_center_positions)

@@ -309,7 +309,7 @@ def validate_uld_records(
 
             if bool(box.get("allow_center_load", False)):
                 errors.append(
-                    f"第 {index} 列（{box_id}）：96 為機尾唯一中央專用盤位，"
+                    f"第 {index} 列（{box_id}）：96 為機尾中間唯一專用盤位，"
                     "不使用一般『可中央裝載』開關，請保持關閉。"
                 )
 

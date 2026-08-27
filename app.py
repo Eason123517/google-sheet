@@ -56,13 +56,14 @@ from b777_visualization import (
 )
 from b777_uld_packing import local_to_aircraft_y
 from bup_rules import partition_bup_units
+from cargo_metrics import calculate_cf
 from b777_uld_rules import (
     config_warnings as b777_uld_config_warnings,
 )
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.5", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.6", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1085,6 +1086,7 @@ def display_packing_result(packed_boxes, remaining):
         box_volume = b.box_type.l * b.box_type.w * b.box_type.h
         used_volume = sum(p.l * p.w * p.h for p in b.placements)
         total_weight = sum(p.weight for p in b.placements)
+        total_cf = calculate_cf(b.placements)
 
         summary.append(
             {
@@ -1094,6 +1096,7 @@ def display_packing_result(packed_boxes, remaining):
                 "BUP ID": b.bup_group or "-",
                 "ULD尺寸": f"{b.box_type.l}×{b.box_type.w}×{b.box_type.h}",
                 "貨物數": len(b.placements),
+                "C.F.": round(total_cf, 2),
                 "ULD內總重量(kg)": round(total_weight, 2),
                 "空間利用率": f"{used_volume / box_volume * 100:.1f}%",
             }
@@ -1196,7 +1199,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.5")
+st.title("✈️ 3D貨物排列系統 v1.13.6")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1538,7 +1541,7 @@ elif page == "🧰 ULD／箱子管理":
         "PGA 單側固定占 2 個 118 盤位、中央固定占 4 個；"
         "118/PGA/114 只能用於上貨艙。"
         "114 規格：310×236、最高 140 cm、只能使用機頭2位＋機尾2位中央專用位置；"
-        "96 為機尾最後方唯一中央專用盤位，尺寸 317×243×243。"
+        "96 為機尾最後方唯一專用盤位，位置在機尾中間，尺寸 317×243×243。"
         "因 114 最大載重尚未提供，本版不自行加入 114 到 boxes.json。"
         "新增 114 後會自動套用專用規則。"
     )
@@ -1691,7 +1694,7 @@ elif page == "🚀 自動裝載":
             "已套用 B777 上艙盤位規則：118 等效盤位最多 22（左右各 11）；"
             "PGA 單側占 2、中央占 4；盤位圖採左側機頭、右側機尾。"
             "114 以前方2個＋後方2個中央專用位置直接嵌入盤位圖；"
-            "最右側為唯一1個96機尾中央專用盤位。"
+            "最右側為唯一1個96機尾中間專用盤位。"
         )
 
         all_boxes = load_boxes()
@@ -1780,7 +1783,7 @@ elif page == "🚀 自動裝載":
                                 "114：機頭2＋機尾2中央專用 / 高140"
                                 if str(b["box_id"]).upper() == "114"
                                 else (
-                                    "96：機尾唯一中央專用 / 317×243×243"
+                                    "96：機尾中間唯一專用 / 317×243×243"
                                     if str(b["box_id"]).upper() == "96"
                                     else "一般118等效盤位"
                                 )
@@ -1882,6 +1885,7 @@ elif page == "🚀 自動裝載":
                         p.weight
                         for p in load.placements
                     )
+                    total_cf = calculate_cf(load.placements)
 
                     summary_rows.append(
                         {
@@ -1890,16 +1894,16 @@ elif page == "🚀 自動裝載":
                             "ULD名稱": load.spec.uld_name,
                             "BUP ID": load.bup_group or "-",
                             "Surface": (
-                                "中央裝載"
-                                if load.spec.loading_mode == "CENTER"
+                                "114專用位置"
+                                if load.spec.position_family == "114_SPECIAL"
                                 else (
-                                    (
-                                        "114專用位置"
-                                        if load.spec.position_family == "114_SPECIAL"
-                                        else "尾端96專用位置"
+                                    "機尾中間96專用位置"
+                                    if load.spec.position_family == "96_TAIL"
+                                    else (
+                                        "中央裝載"
+                                        if load.spec.loading_mode == "CENTER"
+                                        else f"{load.side}側"
                                     )
-                                    if load.spec.position_family in {"114_SPECIAL", "96_TAIL"}
-                                    else f"{load.side}側"
                                 )
                             ),
                             "盤位家族": (
@@ -1919,12 +1923,16 @@ elif page == "🚀 自動裝載":
                             "需要同尺寸ULD數": load.spec.uld_units_required,
                             "中央裝載盤位數": (
                                 load.spec.positions_used
-                                if load.spec.loading_mode == "CENTER"
+                                if (
+                                    load.spec.loading_mode == "CENTER"
+                                    and load.spec.position_family == "118_EQUIV"
+                                )
                                 else "-"
                             ),
                             "Bay": "-".join(load.bays),
                             "占用盤位": ",".join(load.occupied_positions),
                             "貨物數": len(load.placements),
+                            "C.F.": round(total_cf, 2),
                             "總重量(kg)": round(total_weight, 2),
                             "Surface長(cm)": round(load.spec.base_length, 2),
                             "Surface寬(cm)": round(load.spec.surface_width, 2),
