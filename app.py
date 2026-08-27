@@ -57,13 +57,14 @@ from b777_visualization import (
 from b777_uld_packing import local_to_aircraft_y
 from bup_rules import partition_bup_units
 from cargo_metrics import calculate_cf
+from quick_dimension_converter import parse_dimension_text
 from b777_uld_rules import (
     config_warnings as b777_uld_config_warnings,
 )
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.7", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.8", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1199,7 +1200,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.7")
+st.title("✈️ 3D貨物排列系統 v1.13.8")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1360,6 +1361,142 @@ if page == "🏠 起始頁":
 elif page == "🧱 貨物資料":
     profile = get_aircraft_profile(st.session_state["selected_aircraft"])
     st.subheader(f"貨物資料｜{profile.code}")
+
+    # -----------------------------------------------------
+    # 快速尺寸文字轉換
+    # -----------------------------------------------------
+    st.markdown("#### 📝 快速尺寸轉換")
+
+    st.caption(
+        "直接貼上「長 寬 高 數量」。支援 *、x、X、× 或空白分隔；"
+        "系統會自動解析、檢查錯誤，確認後可直接帶入貨物資料或下載 CSV。"
+    )
+
+    quick_col1, quick_col2, quick_col3 = st.columns([1, 1, 2])
+
+    with quick_col1:
+        quick_id_prefix = st.text_input(
+            "ID 前綴",
+            value="CARGO",
+            key="quick_dimension_id_prefix",
+        )
+
+    with quick_col2:
+        quick_agt = st.text_input(
+            "AGT（選填）",
+            value="",
+            key="quick_dimension_agt",
+        )
+
+    with quick_col3:
+        st.caption(
+            "例如：`121*102*147*1`、`121×102×147×1`、"
+            "`121 102 147 1` 都會解讀為 長×寬×高×數量。"
+        )
+
+    quick_dimension_text = st.text_area(
+        "貼上尺寸文字",
+        height=190,
+        placeholder=(
+            "121*102*147*1\n"
+            "120x47x30x1\n"
+            "155 69 53 2"
+        ),
+        key="quick_dimension_text",
+    )
+
+    quick_rows, quick_errors = parse_dimension_text(
+        quick_dimension_text,
+        id_prefix=quick_id_prefix,
+        name_prefix="貨物",
+        agt=quick_agt,
+    )
+
+    if quick_dimension_text.strip():
+        quick_df = pd.DataFrame(
+            quick_rows,
+            columns=ITEM_COLUMNS,
+        )
+
+        total_quick_pieces = (
+            int(quick_df["數量"].sum())
+            if not quick_df.empty
+            else 0
+        )
+
+        q1, q2, q3 = st.columns(3)
+        q1.metric("有效資料列", len(quick_rows))
+        q2.metric("總件數", total_quick_pieces)
+        q3.metric("錯誤行", len(quick_errors))
+
+        if quick_errors:
+            st.error(
+                "發現格式錯誤，請先修正下列行。"
+                "為避免漏貨，存在錯誤時不開放帶入與下載。"
+            )
+            st.dataframe(
+                pd.DataFrame(quick_errors),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        if quick_rows:
+            st.markdown("##### 解析預覽")
+            st.dataframe(
+                quick_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            csv_bytes = quick_df.to_csv(
+                index=False,
+            ).encode("utf-8-sig")
+
+            action_col1, action_col2, action_spacer = st.columns(
+                [1, 1, 2]
+            )
+
+            with action_col1:
+                bring_in_disabled = bool(quick_errors)
+
+                if st.button(
+                    "➡️ 帶入貨物資料",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=bring_in_disabled,
+                    key="quick_dimension_apply",
+                ):
+                    st.session_state["item_data"] = quick_df.copy()
+                    st.session_state["item_editor_version"] += 1
+                    st.session_state.pop("last_item_csv_hash", None)
+                    invalidate_packing_result()
+                    st.session_state["quick_dimension_import_success"] = (
+                        f"已帶入 {len(quick_df)} 筆、"
+                        f"共 {total_quick_pieces} 件貨物。"
+                    )
+                    st.rerun()
+
+            with action_col2:
+                st.download_button(
+                    "⬇️ 下載 CSV",
+                    data=csv_bytes,
+                    file_name="貨物尺寸轉換.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    disabled=bool(quick_errors),
+                    key="quick_dimension_download",
+                )
+
+    if st.session_state.pop("quick_dimension_import_success", None) is not None:
+        # 使用 pop 後再從前一次訊息安全顯示。
+        # 這裡重新計算目前帶入筆數即可。
+        current_df = st.session_state["item_data"]
+        st.success(
+            f"尺寸資料已帶入下方貨物表格，共 {len(current_df)} 筆、"
+            f"{int(current_df['數量'].sum())} 件。"
+        )
+
+    st.divider()
 
     st.markdown("#### CSV 匯入")
     import_col, import_spacer = st.columns([1, 2])
