@@ -1,77 +1,68 @@
-
 import json
+import sys
 import io
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+
+# 確保不論從本地、VS Code、Codespaces 或其他工作目錄啟動，
+# 都能找到與 app.py 放在同一資料夾的機型模組。
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 from collections import Counter, defaultdict
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
-import pandas as pd
 
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-try:
-    df = conn.read(
-        spreadsheet="https://docs.google.com/spreadsheets/d/1KJntRmxBOLyl1lfEo1Sqi8MS59GNXo12z-ETlkfEX-8/edit?usp=sharing",
-        worksheet="boxes",
-        ttl="0"
-    )
-except Exception as e:
-    # 如果試算表是空的，自動建立一組帶有正確欄位名稱的空表格
-    st.warning("⚠️ 無法讀取雲端資料庫，已為您建立空白暫存表。")
-    df = pd.DataFrame(columns=["box_name", "length", "width", "height"])
-
-
+from box_store import (
+    load_boxes,
+    save_boxes,
+    storage_backend_name,
+    storage_connection_info,
+    storage_healthcheck,
+    seed_missing_default_boxes,
+)
+from aircraft_registry import (
+    aircraft_codes,
+    aircraft_label,
+    get_aircraft_module,
+    get_aircraft_profile,
+)
+from uld_service import (
+    get_compatible_ulds,
+    boxes_to_editor_dataframe,
+    editor_dataframe_to_boxes,
+    validate_uld_records,
+)
+from b777_contours import BM_HALF_CONTOUR, REAR_UPPER_HALF_CONTOUR
+from b777_positions import POSITION_RULE_NOTE
+from b777_planner import (
+    plan_upper_deck_uld,
+    total_positions_used,
+    total_118_positions_used,
+    total_114_positions_used,
+    total_96_tail_positions_used,
+    total_uld_units_used,
+    total_pieces_loaded,
+)
+from b777_visualization import (
+    make_contour_figure,
+    make_position_plan_figure,
+    make_load_3d_figure,
+    make_load_cross_section_figure,
+    load_extents,
+)
+from b777_uld_packing import local_to_aircraft_y
+from bup_rules import partition_bup_units
+from b777_uld_rules import (
+    config_warnings as b777_uld_config_warnings,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 
-# 建立 Google Sheets 連線
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# 讀取資料表（填入你剛剛複製的試算表網址）
-# ttl="0" 代表不快取，每次重新整理網頁都會抓最新資料
-df = conn.read(
-    spreadsheet="https://docs.google.com/spreadsheets/d/1KJntRmxBOLyl1lfEo1Sqi8MS59GNXo12z-ETlkfEX-8/edit?usp=sharing",
-    worksheet="boxes",
-    ttl="0"
-)
-
-# 1. 確保你的表單輸入元件（例如 text_input, number_input）都在這裡
-# 範例：
-# input_id = st.text_input("箱型 ID")
-# input_name = st.text_input("箱型名稱")
-
-# 2. 只有在按下「新增箱型」按鈕時，才執行裡面的程式碼
-if st.button("確認新增箱型"):
-    # 在按鈕內部定義 new_box
-    new_box = {
-        "box_id": input_id,     # 請對應你網頁上的輸入變數名稱
-        "name": input_name,
-        "L": input_l,
-        "W": input_w,
-        "H": input_h,
-        "max_weight": input_weight
-    }
-    
-    # 轉成 DataFrame
-    new_data = pd.DataFrame([new_box])
-    
-    # 與從 Google Sheets 讀出來的 df 合併
-    updated_df = pd.concat([df, new_data], ignore_index=True)
-    
-    # 更新回 Google Sheets
-    conn.update(worksheet="boxes", data=updated_df)
-    st.success("✅ 新箱型已成功同步至 Google Sheets！")
-    st.rerun() # 重新整理網頁畫面以顯示新資料
-
-
-# 在網頁上呈現資料
-st.set_page_config(page_title="3D貨物排列系統v1.0", layout="wide")
-
+st.set_page_config(page_title="3D貨物排列系統v1.13.2", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -98,6 +89,9 @@ class Item:
     horizontal_rotate: bool
     vertical_rotate: bool
     cannot_crush: bool
+    agt: str = ""
+    bup: bool = False
+    batch_id: str = ""
 
 
 @dataclass
@@ -119,38 +113,15 @@ class Placement:
 class PackedBox:
     box_type: BoxType
     placements: list
+    bup_group: str | None = None
 
 
 # =========================================================
 # Box library
 # =========================================================
-def load_boxes():
-    try:
-        # 直接使用先前建立的 conn 連線讀取 Google Sheets
-        df = conn.read(worksheet="boxes", ttl="0")
-
-        # 將欄位名稱統一調整為你演算法中使用的名稱（確保大小寫一致，例如 L/W/H 或 l/w/h）
-        # 如果試算表是小寫 l, w, h，而演算法需要大寫，可以在這裡用 rename 修正：
-        # df = df.rename(columns={"l": "L", "w": "W", "h": "H", "weight": "max_weight"})
-
-        # 轉成 dict 格式陣列回傳給你的演算法
-        return df.to_dict('records')
-    except Exception as e:
-        # 如果讀取失敗，回傳預設的空陣列，防止整頁崩潰
-        return []
-
-
-def save_boxes(boxes):
-    try:
-        # 🟢 將演算法傳進來的 dict 陣列轉回 Pandas DataFrame
-        updated_df = pd.DataFrame(boxes)
-        
-        # 🟢 直接將完整的最新資料覆蓋更新回 Google Sheets 的 boxes 工作表
-        conn.update(worksheet="boxes", data=updated_df)
-        st.success("✅ 資料庫已成功同步至 Google Sheets！")
-    except Exception as e:
-        st.error(f"❌ 無法寫入雲端資料庫: {e}")
-
+# 箱型資料存取已抽離至 box_store.py。
+# app.py 只呼叫 load_boxes() / save_boxes()，
+# 本地 JSON 與未來 Google Sheets 可在不修改演算法/UI 的情況下切換。
 
 
 # =========================================================
@@ -192,12 +163,29 @@ def orientations(item):
 # Item helpers
 # =========================================================
 def expand_items(items):
+    """
+    展開數量為單件 unit。
+
+    v1.9：
+    - item.item_id 是原始「批次 ID」。
+    - 相同 ID 可能出現在多列、尺寸也可能不同。
+    - unit item_id 必須保持唯一，因此同一批 ID 的流水號會跨列延續。
+    - batch_id 永遠保留原始 ID，供 BUP 判斷。
+    """
     units = []
+    batch_counters = {}
+
     for item in items:
-        for i in range(item.qty):
+        batch = str(item.item_id or "").strip()
+        batch_counters.setdefault(batch, 0)
+
+        for _ in range(item.qty):
+            batch_counters[batch] += 1
+            unit_seq = batch_counters[batch]
+
             units.append(
                 Item(
-                    item_id=f"{item.item_id}-{i+1:03d}",
+                    item_id=f"{batch}-{unit_seq:03d}",
                     name=item.name,
                     l=item.l,
                     w=item.w,
@@ -207,13 +195,20 @@ def expand_items(items):
                     horizontal_rotate=item.horizontal_rotate,
                     vertical_rotate=item.vertical_rotate,
                     cannot_crush=item.cannot_crush,
+                    agt=item.agt,
+                    bup=item.bup,
+                    batch_id=batch,
                 )
             )
+
     return units
 
 
 def item_signature(item):
-    base_id = item.item_id.rsplit("-", 1)[0]
+    base_id = str(getattr(item, "batch_id", "") or "").strip()
+    if not base_id:
+        base_id = item.item_id.rsplit("-", 1)[0]
+
     return (
         base_id,
         item.name,
@@ -610,7 +605,7 @@ def candidate_one_box_results(box_type, units):
 # =========================================================
 # Multi-box packing
 # =========================================================
-def pack_using_single_box_type(box_type, units):
+def _pack_using_single_box_type_core(box_type, units):
     remaining = list(units)
     packed_boxes = []
     safety_limit = len(remaining)
@@ -633,7 +628,7 @@ def pack_using_single_box_type(box_type, units):
     return packed_boxes, remaining
 
 
-def pack_using_mixed_box_types(box_types, units):
+def _pack_using_mixed_box_types_core(box_types, units):
     remaining = list(units)
     packed_boxes = []
     safety_limit = len(remaining)
@@ -673,6 +668,56 @@ def pack_using_mixed_box_types(box_types, units):
         remaining = new_remaining
 
     return packed_boxes, remaining
+
+
+
+def pack_using_single_box_type(box_type, units):
+    """
+    A333 / 通用 ULD 的 BUP 包裝器。
+    BUP 群組個別裝箱；一般貨物最後才混裝。
+    """
+    all_boxes = []
+    all_remaining = []
+
+    for group_name, segment_units, is_bup in partition_bup_units(units):
+        boxes, remaining = _pack_using_single_box_type_core(
+            box_type,
+            segment_units,
+        )
+
+        if is_bup:
+            for packed in boxes:
+                packed.bup_group = group_name
+
+        all_boxes.extend(boxes)
+        all_remaining.extend(remaining)
+
+    return all_boxes, all_remaining
+
+
+def pack_using_mixed_box_types(box_types, units):
+    """
+    混合 ULD 模式同樣遵守 BUP：
+    BUP 群組可以使用多個不同尺寸 ULD，
+    但任何裝有該群組貨物的 ULD 都不混入其他群組。
+    """
+    all_boxes = []
+    all_remaining = []
+
+    for group_name, segment_units, is_bup in partition_bup_units(units):
+        boxes, remaining = _pack_using_mixed_box_types_core(
+            box_types,
+            segment_units,
+        )
+
+        if is_bup:
+            for packed in boxes:
+                packed.bup_group = group_name
+
+        all_boxes.extend(boxes)
+        all_remaining.extend(remaining)
+
+    return all_boxes, all_remaining
 
 
 # =========================================================
@@ -764,7 +809,8 @@ def safe_bool(value, default=False):
 
 
 ITEM_COLUMNS = [
-    "ID", "名稱", "長(cm)", "寬(cm)", "高(cm)", "數量", "重量(kg)",
+    "ID", "名稱", "AGT", "BUP",
+    "長(cm)", "寬(cm)", "高(cm)", "數量", "總重量(kg)",
     "水平旋轉", "垂直旋轉", "不能疊",
 ]
 
@@ -777,11 +823,13 @@ def default_item_dataframe():
             {
                 "ID": "",
                 "名稱": "",
+                "AGT": "",
+                "BUP": False,
                 "長(cm)": 0.0,
                 "寬(cm)": 0.0,
                 "高(cm)": 0.0,
                 "數量": 0,
-                "重量(kg)": 0.0,
+                "總重量(kg)": 0.0,
                 "水平旋轉": True,
                 "垂直旋轉": False,
                 "不能疊": False,
@@ -826,8 +874,17 @@ def normalize_item_csv(df):
         "寬度": "寬(cm)",
         "高": "高(cm)",
         "高度": "高(cm)",
-        "重量": "重量(kg)",
+        "重量": "總重量(kg)",
+        "重量(kg)": "總重量(kg)",
+        "總重": "總重量(kg)",
+        "總重量": "總重量(kg)",
         "數量(件)": "數量",
+        "公司": "AGT",
+        "客戶": "AGT",
+        "群組": "AGT",
+        "代理": "AGT",
+        "Agent": "AGT",
+        "agent": "AGT",
         "不能壓": "不能疊",
     }
     df = df.rename(columns={c: aliases.get(c, c) for c in df.columns})
@@ -837,7 +894,9 @@ def normalize_item_csv(df):
         raise ValueError("CSV 缺少必要欄位：" + "、".join(missing))
 
     defaults = {
-        "重量(kg)": 0.0,
+        "AGT": "",
+        "BUP": False,
+        "總重量(kg)": 0.0,
         "水平旋轉": True,
         "垂直旋轉": False,
         "不能疊": False,
@@ -849,7 +908,7 @@ def normalize_item_csv(df):
     # 僅保留程式需要的欄位並固定順序。
     df = df[ITEM_COLUMNS]
 
-    numeric_cols = ["長(cm)", "寬(cm)", "高(cm)", "數量", "重量(kg)"]
+    numeric_cols = ["長(cm)", "寬(cm)", "高(cm)", "數量", "總重量(kg)"]
     for col in numeric_cols:
         converted = pd.to_numeric(df[col], errors="coerce")
         bad_rows = converted.isna() & df[col].notna()
@@ -862,13 +921,14 @@ def normalize_item_csv(df):
         raise ValueError("長、寬、高必須大於 0。")
     if (df["數量"] < 0).any():
         raise ValueError("數量不可小於 0。")
-    if (df["重量(kg)"] < 0).any():
+    if (df["總重量(kg)"] < 0).any():
         raise ValueError("重量不可小於 0。")
 
     df["數量"] = df["數量"].fillna(0).astype(int)
-    df["重量(kg)"] = df["重量(kg)"].fillna(0.0).astype(float)
+    df["總重量(kg)"] = df["總重量(kg)"].fillna(0.0).astype(float)
 
     for col, default in [
+        ("BUP", False),
         ("水平旋轉", True),
         ("垂直旋轉", False),
         ("不能疊", False),
@@ -877,6 +937,7 @@ def normalize_item_csv(df):
 
     df["ID"] = df["ID"].fillna("").astype(str).str.strip()
     df["名稱"] = df["名稱"].fillna("").astype(str).str.strip()
+    df["AGT"] = df["AGT"].fillna("").astype(str).str.strip()
 
     return df.reset_index(drop=True)
 
@@ -914,26 +975,35 @@ def dataframe_to_items(df):
     items = []
 
     for _, r in df.iterrows():
-        if not str(r["ID"]).strip():
+        item_id = str(r["ID"]).strip()
+        if not item_id:
             continue
 
         qty = int(r["數量"])
         if qty <= 0:
             continue
 
+        # 「總重量(kg)」代表該列全部數量的合計重量。
+        # Packing Engine 內部仍以單件貨物運算，因此在這裡換算成單件重量。
+        total_weight = float(r["總重量(kg)"])
+        unit_weight = total_weight / qty if qty > 0 else 0.0
+
         items.append(
             Item(
-                item_id=str(r["ID"]).strip(),
+                item_id=item_id,
                 name=str(r["名稱"]),
                 l=float(r["長(cm)"]),
                 w=float(r["寬(cm)"]),
                 h=float(r["高(cm)"]),
                 qty=qty,
-                weight=float(r["重量(kg)"]),
+                weight=unit_weight,
                 # 新增列時，水平旋轉預設 True、垂直旋轉預設 False。
                 horizontal_rotate=safe_bool(r["水平旋轉"], True),
                 vertical_rotate=safe_bool(r["垂直旋轉"], False),
                 cannot_crush=safe_bool(r["不能疊"], False),
+                agt=str(r.get("AGT", "") or "").strip(),
+                bup=safe_bool(r.get("BUP", False), False),
+                batch_id=item_id,
             )
         )
 
@@ -957,7 +1027,7 @@ def display_packing_result(packed_boxes, remaining):
     utilization = packed_volume / total_box_volume * 100 if total_box_volume else 0
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("需要箱數", len(packed_boxes))
+    c1.metric("需要 ULD 數", len(packed_boxes))
     c2.metric("成功裝入", placed_count)
     c3.metric("無法裝入", len(remaining))
     c4.metric("整體空間利用率", f"{utilization:.1f}%")
@@ -966,13 +1036,13 @@ def display_packing_result(packed_boxes, remaining):
         counts = Counter(b.box_type.box_id for b in packed_boxes)
         name_map = {b.box_type.box_id: b.box_type.name for b in packed_boxes}
 
-        st.subheader("📊 建議箱型數量")
+        st.subheader("📊 建議 ULD 數量")
         st.dataframe(
             pd.DataFrame(
                 [
                     {
-                        "箱型ID": box_id,
-                        "箱型名稱": name_map[box_id],
+                        "ULD ID": box_id,
+                        "ULD 名稱": name_map[box_id],
                         "需要數量": qty,
                     }
                     for box_id, qty in counts.items()
@@ -983,15 +1053,18 @@ def display_packing_result(packed_boxes, remaining):
         )
 
     if remaining:
-        st.error("有貨物無法放入目前選定的箱型。")
+        st.error("有貨物無法放入目前選定的 ULD。")
         st.dataframe(
             pd.DataFrame(
                 [
                     {
                         "貨物ID": x.item_id,
                         "名稱": x.name,
+                        "AGT": x.agt,
+                        "批次ID": x.batch_id,
+                        "BUP": x.bup,
                         "尺寸": f"{x.l}×{x.w}×{x.h}",
-                        "重量(kg)": x.weight,
+                        "單件重量(kg)": round(x.weight, 3),
                         "不能疊": x.cannot_crush,
                     }
                     for x in remaining
@@ -1015,22 +1088,23 @@ def display_packing_result(packed_boxes, remaining):
 
         summary.append(
             {
-                "箱號": idx,
-                "箱型": b.box_type.box_id,
+                "ULD序號": idx,
+                "ULD ID": b.box_type.box_id,
                 "名稱": b.box_type.name,
-                "箱尺寸": f"{b.box_type.l}×{b.box_type.w}×{b.box_type.h}",
+                "BUP ID": b.bup_group or "-",
+                "ULD尺寸": f"{b.box_type.l}×{b.box_type.w}×{b.box_type.h}",
                 "貨物數": len(b.placements),
-                "重量(kg)": round(total_weight, 2),
+                "ULD內總重量(kg)": round(total_weight, 2),
                 "空間利用率": f"{used_volume / box_volume * 100:.1f}%",
             }
         )
 
-    st.subheader("📦 每箱配置")
+    st.subheader("📦 每 ULD 配置")
     st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
 
     for idx, b in enumerate(packed_boxes, 1):
         with st.expander(
-            f"箱 {idx}｜{b.box_type.box_id} {b.box_type.name}｜"
+            f"ULD {idx}｜{b.box_type.box_id} {b.box_type.name}｜"
             f"{len(b.placements)} 件貨物"
         ):
             st.plotly_chart(
@@ -1047,7 +1121,7 @@ def display_packing_result(packed_boxes, remaining):
             mz.metric("目前貨物最大 高", f"{max_z:.2f}")
             st.caption(
                 "最大值以貨物外緣計算：長=max(X+L)、寬=max(Y+W)、高=max(Z+H)。"
-                f" 箱體上限：長={b.box_type.l:.2f}、寬={b.box_type.w:.2f}、高={b.box_type.h:.2f}。"
+                f" ULD上限：長={b.box_type.l:.2f}、寬={b.box_type.w:.2f}、高={b.box_type.h:.2f}。"
             )
 
             result_df = pd.DataFrame(
@@ -1062,7 +1136,7 @@ def display_packing_result(packed_boxes, remaining):
                         "L": round(p.l, 2),
                         "W": round(p.w, 2),
                         "H": round(p.h, 2),
-                        "重量(kg)": p.weight,
+                        "單件重量(kg)": round(p.weight, 3),
                         "RX": p.rotation[0],
                         "RY": p.rotation[1],
                         "RZ": p.rotation[2],
@@ -1104,7 +1178,7 @@ def validate_item_data_for_packing(df):
             l = float(r.get("長(cm)", 0) or 0)
             w = float(r.get("寬(cm)", 0) or 0)
             h = float(r.get("高(cm)", 0) or 0)
-            weight = float(r.get("重量(kg)", 0) or 0)
+            weight = float(r.get("總重量(kg)", 0) or 0)
         except Exception:
             errors.append(f"第 {index + 1} 列（{item_id}）：長、寬、高、重量必須是數字。")
             continue
@@ -1118,102 +1192,171 @@ def validate_item_data_for_packing(df):
 
 
 
+
 # =========================================================
 # App UI
 # =========================================================
-st.title("📦 3D貨物排列系統v1.0")
-st.caption("操作效能改善版：貨物表格改為批次套用，並只執行目前選擇的功能頁面。")
+st.title("✈️ 3D貨物排列系統 v1.13.2")
+st.caption(
+    "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
+)
 
 if "item_data" not in st.session_state:
     st.session_state["item_data"] = default_item_dataframe()
 if "item_editor_version" not in st.session_state:
     st.session_state["item_editor_version"] = 0
-
-# 不再使用 st.tabs。
-# st.tabs 會執行所有頁籤內容，包含大量 Plotly 3D 圖。
-# 改成單頁選擇器後，只會執行目前選擇的頁面。
-page = st.radio(
-    "功能頁面",
-    ["📦 箱子管理", "🧱 貨物資料", "🚀 自動裝箱"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_page",
-)
-
-st.divider()
+if "uld_editor_version" not in st.session_state:
+    st.session_state["uld_editor_version"] = 0
+if "selected_aircraft" not in st.session_state:
+    st.session_state["selected_aircraft"] = "A333"
+if "_last_selected_aircraft" not in st.session_state:
+    st.session_state["_last_selected_aircraft"] = st.session_state["selected_aircraft"]
 
 
 # =========================================================
-# Page: 箱子管理
+# Collapsible sidebar
 # =========================================================
-if page == "📦 箱子管理":
+with st.sidebar:
+    st.header("✈️ 功能選單")
+
+    page = st.radio(
+        "頁面",
+        [
+            "🏠 起始頁",
+            "🧱 貨物資料",
+            "🚀 自動裝載",
+            "🧰 ULD／箱子管理",
+        ],
+        label_visibility="collapsed",
+        key="sidebar_page",
+    )
+
+    st.divider()
+
+    current_profile = get_aircraft_profile(st.session_state["selected_aircraft"])
+    st.caption("目前選擇機型")
+    st.markdown(f"**{current_profile.display_name}**")
+    st.caption(f"狀態：{current_profile.status_text}")
+
+    st.divider()
+    st.caption(f"ULD 資料來源：{storage_backend_name()}")
+
+    st.caption("側邊欄可使用 Streamlit 左上方箭頭收合。")
+
+
+# =========================================================
+# Page: 起始頁
+# =========================================================
+if page == "🏠 起始頁":
+    st.subheader("選擇飛機機型")
+
+    codes = aircraft_codes()
+    current_index = (
+        codes.index(st.session_state["selected_aircraft"])
+        if st.session_state["selected_aircraft"] in codes
+        else 0
+    )
+
+    selected_aircraft = st.selectbox(
+        "飛機機型",
+        codes,
+        index=current_index,
+        format_func=aircraft_label,
+        key="home_aircraft_selector",
+    )
+
+    if selected_aircraft != st.session_state["selected_aircraft"]:
+        st.session_state["selected_aircraft"] = selected_aircraft
+        st.session_state["_last_selected_aircraft"] = selected_aircraft
+        invalidate_packing_result()
+        st.rerun()
+
+    profile = get_aircraft_profile(st.session_state["selected_aircraft"])
+    aircraft_module = get_aircraft_module(profile.code)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("機型", profile.code)
+    c2.metric("類型", profile.aircraft_type)
+    c3.metric("裝載計算", "可測試" if profile.allow_packing else "待設定")
+
+    st.markdown(f"### {profile.display_name}")
+    st.write(profile.description)
+
+    if profile.notes:
+        with st.expander("此機型目前設定", expanded=True):
+            for note in profile.notes:
+                st.write(f"- {note}")
+
     boxes = load_boxes()
+    compatible_ulds = get_compatible_ulds(
+        boxes,
+        profile.code,
+        enabled_only=True,
+    )
 
-    st.subheader("箱型資料庫")
-    st.write("箱型會保存在本機 `boxes.json`。")
+    st.markdown("### 此機型目前可用 ULD")
 
-    with st.form("add_box"):
-        c1, c2, c3 = st.columns(3)
-        new_id = c1.text_input("箱型 ID", value=f"BOX-{len(boxes)+1:02d}")
-        new_name = c2.text_input("箱型名稱", value="新箱型")
-        new_l = c3.number_input("長 (cm)", min_value=1.0, value=50.0)
-
-        c4, c5, c6 = st.columns(3)
-        new_w = c4.number_input("寬 (cm)", min_value=1.0, value=40.0)
-        new_h = c5.number_input("高 (cm)", min_value=1.0, value=40.0)
-        new_weight = c6.number_input("最大載重 (kg)", min_value=0.1, value=20.0)
-
-        submitted_box = st.form_submit_button("新增箱型")
-
-    if submitted_box:
-        if any(x["box_id"] == new_id for x in boxes):
-            st.error("箱型 ID 已存在。")
-        else:
-            boxes.append(
+    if compatible_ulds:
+        uld_df = pd.DataFrame(
+            [
                 {
-                    "box_id": new_id,
-                    "name": new_name,
-                    "l": new_l,
-                    "w": new_w,
-                    "h": new_h,
-                    "max_weight": new_weight,
+                    "ULD ID": b["box_id"],
+                    "名稱": b["name"],
+                    "長(cm)": b["l"],
+                    "寬(cm)": b["w"],
+                    "高(cm)": b["h"],
+                    "最大載重(kg)": b["max_weight"],
                 }
-            )
-            save_boxes(boxes)
-            invalidate_packing_result()
-            st.success("箱型已儲存。")
+                for b in compatible_ulds
+            ]
+        )
+        st.dataframe(uld_df, use_container_width=True, hide_index=True)
+        st.success(
+            f"已自動帶入 {len(compatible_ulds)} 種適用於 {profile.code} 的 ULD。"
+        )
+    else:
+        st.warning(
+            f"{profile.code} 目前尚未設定可用 ULD。"
+            "請從左側選單進入「ULD／箱子管理」新增或指定適用機型。"
+        )
 
-    boxes = load_boxes()
+    if profile.code == "A333":
+        st.info(
+            "A333 目前為測試階段：裝載限制先以 boxes.json 中所設定的 ULD "
+            "長／寬／高與最大載重為基礎。尚未加入艙門、貨艙輪廓、位置、重心等航空專用限制。"
+        )
+    elif profile.code == "B777":
+        st.info(
+            "B777-200F 目前已啟用 B~M 上艙第一階段測試。"
+            "後上艙 contour 尚未取得，因此只計算 B~M 區域。"
+        )
 
-    if boxes:
-        df_boxes = pd.DataFrame(boxes)
-        df_boxes.columns = [
-            "箱型ID",
-            "名稱",
-            "長(cm)",
-            "寬(cm)",
-            "高(cm)",
-            "最大載重(kg)",
-        ]
+        contour_df = pd.DataFrame(
+            [
+                {"半寬位置(cm)": p.x, "最大可用高度(cm)": p.height}
+                for p in BM_HALF_CONTOUR
+            ]
+        )
+        st.dataframe(contour_df, use_container_width=True, hide_index=True)
 
-        st.dataframe(df_boxes, use_container_width=True, hide_index=True)
+        st.plotly_chart(
+            make_contour_figure(),
+            use_container_width=True,
+            key="b777_home_contour",
+        )
 
-        delete_col, spacer_col = st.columns([1, 3])
-        with delete_col:
-            delete_id = st.selectbox("刪除箱型", [x["box_id"] for x in boxes])
-            if st.button("刪除選定箱型", use_container_width=True):
-                boxes = [x for x in boxes if x["box_id"] != delete_id]
-                save_boxes(boxes)
-                invalidate_packing_result()
-                st.success("箱型已刪除。")
-                st.rerun()
+        st.caption(POSITION_RULE_NOTE)
+
+        if REAR_UPPER_HALF_CONTOUR is None:
+            st.warning("後上艙 contour：尚未設定，取得資料後再加入。")
 
 
 # =========================================================
 # Page: 貨物資料
 # =========================================================
 elif page == "🧱 貨物資料":
-    st.subheader("貨物資料")
+    profile = get_aircraft_profile(st.session_state["selected_aircraft"])
+    st.subheader(f"貨物資料｜{profile.code}")
 
     st.markdown("#### CSV 匯入")
     import_col, import_spacer = st.columns([1, 2])
@@ -1224,7 +1367,8 @@ elif page == "🧱 貨物資料":
             type=["csv"],
             help=(
                 "必要欄位：ID、名稱、長(cm)、寬(cm)、高(cm)、數量。"
-                "重量(kg)、水平旋轉、垂直旋轉、不能疊可省略。"
+                "AGT、BUP、總重量(kg)、水平旋轉、垂直旋轉、不能疊可省略。"
+                "舊 CSV 的「重量(kg)」也可匯入，並視為該列總重量。"
             ),
             key="item_csv_upload",
         )
@@ -1255,13 +1399,10 @@ elif page == "🧱 貨物資料":
 
     with info_col:
         st.caption(
-            "表格現在採「批次編輯」：可以連續輸入數值、勾選或取消勾選，"
-            "完成後再按「套用貨物資料」。編輯途中不會重新執行整支程式。"
+            "表格採批次編輯：可連續輸入數值、勾選或取消勾選，"
+            "完成後再按「套用貨物資料」。"
         )
 
-    # 關鍵改善：
-    # data_editor 放入 form 後，欄位變更只留在瀏覽器端，
-    # 不會每改一格就觸發 Streamlit 全程 rerun。
     with st.form(
         f"item_edit_form_{st.session_state['item_editor_version']}",
         clear_on_submit=False,
@@ -1272,6 +1413,15 @@ elif page == "🧱 貨物資料":
             use_container_width=True,
             key=f"item_editor_{st.session_state['item_editor_version']}",
             column_config={
+                "BUP": st.column_config.CheckboxColumn(
+                    "BUP",
+                    help=(
+                        "同一「ID」只要任一列開啟 BUP，該 ID 的所有貨物都會視為同一批專用裝箱；"
+                        "可以跨多列、不同尺寸，且該 ULD 不會再混入其他 ID 貨物。"
+                        "AGT 只作公司／代理資訊，不作 BUP 分組依據。"
+                    ),
+                    default=False,
+                ),
                 "水平旋轉": st.column_config.CheckboxColumn(
                     "水平旋轉",
                     help="允許 L/W 在水平面互換",
@@ -1297,166 +1447,781 @@ elif page == "🧱 貨物資料":
         )
 
     if apply_items:
-        # 僅在使用者按下套用時，才將編輯內容寫入正式資料。
         st.session_state["item_data"] = edited_item_df.copy()
         invalidate_packing_result()
-        st.success("貨物資料已套用。現在可以切換至「自動裝箱」進行計算。")
+        st.success("貨物資料已套用。")
 
     st.info(
         "規則：水平旋轉預設開啟；垂直旋轉預設關閉。"
-        "「不能疊」貨物會在一般貨物之後配置，優先選擇較高 Z，且上方禁止再放其他貨物。"
+        "「不能疊」貨物上方不得再放其他貨物。"
+        "BUP：以「ID」為批次判斷。同一 ID 只要任一列勾選 BUP，該 ID 全部貨物會使用專用 ULD；"
+        "可自動分成多個 ULD，但不會與其他 ID 混裝。未啟用 BUP 的貨物可互相混裝。"
+        "AGT 僅供標示公司／代理。"
+    )
+    st.caption(
+        "重量輸入規則：「總重量(kg)」是該列全部貨物的合計重量。"
+        "例如數量 5、總重量 500 kg，系統會以每件 100 kg 進行 ULD 載重與排列計算。"
     )
 
 
 # =========================================================
-# Page: 自動裝箱
+# Page: ULD / 箱子管理
 # =========================================================
-elif page == "🚀 自動裝箱":
-    st.subheader("依輸入貨量計算所需箱型與箱數")
+elif page == "🧰 ULD／箱子管理":
+    st.subheader("ULD／箱子管理")
+    st.write(
+        "此頁直接管理 Google Sheets 的 ULD／貨箱資料。"
+        "新增、修改、刪除並儲存後會同步寫回線上 `boxes` worksheet。"
+    )
+
+    status_col, seed_col = st.columns([2, 1])
+
+    with status_col:
+        if st.button(
+            "🔄 測試 Google Sheets 連線",
+            use_container_width=True,
+        ):
+            try:
+                ok, message = storage_healthcheck()
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
+            except Exception as exc:
+                st.error(f"Google Sheets 連線失敗：{exc}")
+
+    with seed_col:
+        if st.button(
+            "☁️ 補入缺少的預設 ULD",
+            use_container_width=True,
+        ):
+            try:
+                added_count, added_ids = seed_missing_default_boxes()
+                if added_count:
+                    st.success(
+                        f"已補入 {added_count} 筆：{', '.join(added_ids)}"
+                    )
+                    st.session_state["uld_editor_version"] += 1
+                    invalidate_packing_result()
+                    st.rerun()
+                else:
+                    st.info("Google Sheets 已包含所有目前預設 ULD。")
+            except Exception as exc:
+                st.error(f"無法補入預設 ULD：{exc}")
+
+    st.caption(
+        "上線預設資料來源為 Google Sheets。"
+        "若要在本機暫時改用 boxes.json，可設定環境變數 BOX_STORE_BACKEND=json。"
+    )
+
+    st.caption(
+        "「適用機型」請用逗號分隔，例如：A333 或 A333,B777。"
+        "「適用區域」例如：A333_GENERIC、B777_UPPER_BM。"
+        "B777 中央裝載時必須使用兩個同尺寸 ULD。"
+        "PGA 單側固定占 2 個 118 盤位、中央固定占 4 個；"
+        "118/PGA/114 只能用於上貨艙。"
+        "114 規格：310×236、最高 140 cm、只能使用機頭2位＋機尾2位中央專用位置；"
+        "96 為機尾最後方唯一中央專用盤位，尺寸 317×243×234。"
+        "因 114 最大載重尚未提供，本版不自行加入 114 到 boxes.json。"
+        "新增 114 後會自動套用專用規則。"
+    )
 
     boxes = load_boxes()
+    editor_df = boxes_to_editor_dataframe(boxes)
 
-    if not boxes:
-        st.error("請先新增至少一種箱型。")
-        st.stop()
-
-    box_options = {
-        f"{b['box_id']}｜{b['name']}｜{b['l']}×{b['w']}×{b['h']} cm｜載重 {b['max_weight']} kg": b
-        for b in boxes
-    }
-
-    selected_labels = st.multiselect(
-        "選擇可使用箱型",
-        list(box_options.keys()),
-        default=list(box_options.keys()),
-    )
-
-    mode = st.radio(
-        "計算模式",
-        [
-            "混合箱型：系統自動判斷箱型組合",
-            "單一箱型：逐一比較每種箱型需要幾箱",
-        ],
-        horizontal=True,
-    )
-
-    if st.button("🚀 計算", type="primary", use_container_width=True):
-        if not selected_labels:
-            st.error("請至少選擇一種箱型。")
-            st.stop()
-
-        current_item_df = st.session_state["item_data"]
-        validation_errors = validate_item_data_for_packing(current_item_df)
-
-        if validation_errors:
-            st.error("貨物資料有需要修正的欄位：")
-            for error in validation_errors[:10]:
-                st.write(f"- {error}")
-            if len(validation_errors) > 10:
-                st.write(f"- 另有 {len(validation_errors) - 10} 筆錯誤。")
-            st.stop()
-
-        items = dataframe_to_items(current_item_df)
-        units = expand_items(items)
-
-        selected_boxes = [
-            BoxType(
-                b["box_id"],
-                b["name"],
-                float(b["l"]),
-                float(b["w"]),
-                float(b["h"]),
-                float(b["max_weight"]),
-            )
-            for b in [box_options[label] for label in selected_labels]
-        ]
-
-        if not units:
-            st.error("目前沒有有效貨物資料。請先到「貨物資料」輸入資料並按「套用貨物資料」。")
-            st.stop()
-
-        st.write(f"輸入貨物總量：**{len(units)} 件**")
-
-        if mode.startswith("混合箱型"):
-            with st.spinner("正在依貨量搜尋箱型組合..."):
-                packed_boxes, remaining = pack_using_mixed_box_types(
-                    selected_boxes,
-                    units,
-                )
-
-            st.session_state["mode"] = "mixed"
-            st.session_state["result"] = [(packed_boxes, remaining)]
-
-        else:
-            results = []
-
-            with st.spinner("正在逐一比較各箱型..."):
-                for box_type in selected_boxes:
-                    packed_boxes, remaining = pack_using_single_box_type(
-                        box_type,
-                        units,
-                    )
-                    results.append((box_type, packed_boxes, remaining))
-
-            st.session_state["mode"] = "single"
-            st.session_state["result"] = results
-
-    # 只有在「自動裝箱」頁面才會產生表格與 Plotly 3D 圖。
-    if st.session_state.get("mode") == "mixed":
-        packed_boxes, remaining = st.session_state["result"][0]
-        st.markdown("### 混合箱型建議")
-        display_packing_result(packed_boxes, remaining)
-
-    elif st.session_state.get("mode") == "single":
-        st.markdown("### 各箱型比較")
-
-        compare_rows = []
-
-        for box_type, packed_boxes, remaining in st.session_state["result"]:
-            total_box_volume = sum(
-                b.box_type.l * b.box_type.w * b.box_type.h
-                for b in packed_boxes
-            )
-
-            used_volume = sum(
-                p.l * p.w * p.h
-                for b in packed_boxes
-                for p in b.placements
-            )
-
-            utilization = (
-                used_volume / total_box_volume * 100
-                if total_box_volume
-                else 0
-            )
-
-            compare_rows.append(
-                {
-                    "箱型ID": box_type.box_id,
-                    "箱型名稱": box_type.name,
-                    "需要箱數": (
-                        len(packed_boxes)
-                        if not remaining
-                        else "無法完整裝入"
-                    ),
-                    "未裝入件數": len(remaining),
-                    "整體利用率": f"{utilization:.1f}%",
-                }
-            )
-
-        st.dataframe(
-            pd.DataFrame(compare_rows),
+    with st.form(
+        f"uld_edit_form_{st.session_state['uld_editor_version']}",
+        clear_on_submit=False,
+    ):
+        edited_uld_df = st.data_editor(
+            editor_df,
+            num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
+            key=f"uld_editor_{st.session_state['uld_editor_version']}",
+            column_config={
+                "可中央裝載": st.column_config.CheckboxColumn(
+                    "可中央裝載",
+                    help=(
+                        "只有勾選此欄的 B777 ULD，才可以在本次計算開啟中央裝載時使用。"
+                    ),
+                    default=False,
+                ),
+                "中央裝載盤位數": st.column_config.NumberColumn(
+                    "中央裝載盤位數",
+                    help=(
+                        "僅 B777 中央裝載使用。中央裝載固定使用兩個同尺寸 ULD；"
+                        "請設定此配對總共占用的 aircraft 盤位數，例如 2 或 4。"
+                    ),
+                    min_value=2,
+                    max_value=22,
+                    step=2,
+                    default=2,
+                ),
+                "啟用": st.column_config.CheckboxColumn(
+                    "啟用",
+                    default=True,
+                ),
+            },
         )
 
-        options = [
-            f"{box_type.box_id}｜{box_type.name}"
-            for box_type, _, _ in st.session_state["result"]
+        save_uld = st.form_submit_button(
+            "💾 儲存 ULD 資料",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if save_uld:
+        try:
+            new_boxes = editor_dataframe_to_boxes(
+                edited_uld_df,
+                valid_aircraft_codes=aircraft_codes(),
+            )
+            errors = validate_uld_records(
+                new_boxes,
+                valid_aircraft_codes=aircraft_codes(),
+            )
+
+            if errors:
+                st.error("ULD 資料有需要修正的欄位：")
+                for error in errors:
+                    st.write(f"- {error}")
+            else:
+                save_boxes(new_boxes)
+                st.session_state["uld_editor_version"] += 1
+                invalidate_packing_result()
+                st.success("ULD 資料已同步儲存至 Google Sheets。")
+                st.rerun()
+        except Exception as exc:
+            st.error(f"無法儲存 ULD 資料：{exc}")
+
+    st.markdown("#### 機型程式模組")
+    module_rows = []
+    for code in aircraft_codes():
+        p = get_aircraft_profile(code)
+        module_rows.append(
+            {
+                "機型": p.code,
+                "名稱": p.display_name,
+                "類型": p.aircraft_type,
+                "狀態": p.status_text,
+                "裝載計算": "啟用" if p.allow_packing else "暫停",
+                "程式檔": p.module_file,
+            }
+        )
+    st.dataframe(pd.DataFrame(module_rows), use_container_width=True, hide_index=True)
+
+
+
+
+# =========================================================
+# Page: 自動裝載
+# =========================================================
+elif page == "🚀 自動裝載":
+    profile = get_aircraft_profile(st.session_state["selected_aircraft"])
+    aircraft_module = get_aircraft_module(profile.code)
+
+    st.subheader(f"自動裝載｜{profile.display_name}")
+
+    current_item_df = st.session_state["item_data"]
+    validation_errors = validate_item_data_for_packing(current_item_df)
+
+    if validation_errors:
+        st.error("貨物資料有需要修正的欄位：")
+        for error in validation_errors[:10]:
+            st.write(f"- {error}")
+        if len(validation_errors) > 10:
+            st.write(f"- 另有 {len(validation_errors) - 10} 筆錯誤。")
+        st.stop()
+
+    items = dataframe_to_items(current_item_df)
+    units = expand_items(items)
+
+    if not units:
+        st.error("目前沒有有效貨物資料。請先到「貨物資料」輸入資料並按「套用貨物資料」。")
+        st.stop()
+
+    # ---------------------------------------------------------
+    # B777 dedicated ULD + contour-aware 3D packing
+    # ---------------------------------------------------------
+    if profile.code == "B777":
+        st.info(
+            "B777 B~M 上艙現在會先依 ULD 的長／寬／高度／載重建立 packing surface，"
+            "再依每件貨物在 surface 內的實際橫向 Y 位置套用 aircraft contour 高度。"
+        )
+        st.caption(
+            "SIDE / 中央裝載代表『盤位／ULD surface 占用方式』，"
+            "不是把每件貨物鎖死在側邊或中央。貨物可在 surface 內偏左、偏右或置中。"
+        )
+        st.caption(POSITION_RULE_NOTE)
+        st.info(
+            "已套用 B777 上艙盤位規則：118 等效盤位最多 22（左右各 11）；"
+            "PGA 單側占 2、中央占 4；盤位圖採左側機頭、右側機尾。"
+            "114 以前方2個＋後方2個中央專用位置直接嵌入盤位圖；"
+            "最右側為唯一1個96機尾中央專用盤位。"
+        )
+
+        all_boxes = load_boxes()
+        compatible_boxes = get_compatible_ulds(
+            all_boxes,
+            "B777",
+            enabled_only=True,
+            zone="B777_UPPER_BM",
+        )
+
+        if not compatible_boxes:
+            st.error(
+                "B777_UPPER_BM 目前沒有可使用 ULD。"
+                "請至「ULD／箱子管理」新增 B777 ULD，"
+                "並將適用區域設為 B777_UPPER_BM。"
+            )
+            st.stop()
+
+        box_options = {
+            (
+                f"{b['box_id']}｜{b['name']}｜"
+                f"{b['l']}×{b['w']}×{b['h']} cm｜"
+                f"載重 {b['max_weight']} kg"
+            ): b
+            for b in compatible_boxes
+        }
+
+        selected_labels = st.multiselect(
+            "本次可使用 B777 上艙 ULD",
+            list(box_options.keys()),
+            default=list(box_options.keys()),
+        )
+
+        selected_ulds = [
+            box_options[label]
+            for label in selected_labels
         ]
 
-        selected_detail = st.selectbox("查看某一箱型詳細排列", options)
-        selected_index = options.index(selected_detail)
+        allow_center_this_run = st.checkbox(
+            "本次允許中央裝載",
+            value=False,
+            help=(
+                "關閉：本次只計算單側 ULD。"
+                "開啟：只有在 ULD／箱子管理中勾選「可中央裝載」的 ULD "
+                "才會加入中央裝載候選。"
+            ),
+            key="b777_allow_center_this_run",
+        )
 
-        box_type, packed_boxes, remaining = st.session_state["result"][selected_index]
-        display_packing_result(packed_boxes, remaining)
+        if allow_center_this_run:
+            center_capable = [
+                b for b in selected_ulds
+                if bool(b.get("allow_center_load", False))
+            ]
+            if not center_capable:
+                st.warning(
+                    "本次雖已開啟中央裝載，但目前選取的 ULD 都沒有勾選「可中央裝載」，"
+                    "因此實際仍只會計算單側裝載。"
+                )
+        else:
+            st.caption(
+                "中央裝載目前為關閉狀態；即使某 ULD 支援中央裝載，本次也不會自動選用。"
+            )
+
+        if selected_ulds:
+            selected_df = pd.DataFrame(
+                [
+                    {
+                        "ULD ID": b["box_id"],
+                        "名稱": b["name"],
+                        "長(cm)": b["l"],
+                        "寬(cm)": b["w"],
+                        "設定高(cm)": b["h"],
+                        "最大載重(kg)": b["max_weight"],
+                        "可中央裝載": b.get("allow_center_load", False),
+                        "中央裝載盤位數": (
+                            b.get("center_positions", 2)
+                            if b.get("allow_center_load", False)
+                            else "-"
+                        ),
+                        "B-M已知contour半寬上限(cm)": min(float(b["w"]), 242.0),
+                        "盤位規則": (
+                            "PGA：單側2 / 中央4個118盤位"
+                            if str(b["box_id"]).upper() == "PGA"
+                            else (
+                                "114：機頭2＋機尾2中央專用 / 高140"
+                                if str(b["box_id"]).upper() == "114"
+                                else (
+                                    "96：機尾唯一中央專用 / 317×243×234"
+                                    if str(b["box_id"]).upper() == "96"
+                                    else "一般118等效盤位"
+                                )
+                            )
+                        ),
+                    }
+                    for b in selected_ulds
+                ]
+            )
+            st.dataframe(
+                selected_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            for b in selected_ulds:
+                for warning in b777_uld_config_warnings(b):
+                    st.warning(f"{b['box_id']}：{warning}")
+
+        with st.expander(
+            "查看 B-M 輪廓參考圖（僅顯示機艙可用輪廓，不代表目前貨物）",
+            expanded=False,
+        ):
+            st.caption(
+                "這張圖的用途是提供 B-M 艙體『寬度－最大高度』基準。"
+                "真正的貨物形狀會在計算完成後，於下方的『貨物剖面圖』與『3D 貨物裝載圖』顯示。"
+            )
+            st.plotly_chart(
+                make_contour_figure(),
+                use_container_width=True,
+                key="b777_contour_reference",
+            )
+
+        if st.button(
+            "🚀 計算 B777 B-M ULD 3D 裝載",
+            type="primary",
+            use_container_width=True,
+        ):
+            if not selected_ulds:
+                st.error("請至少選擇一種 B777 ULD。")
+                st.stop()
+
+            with st.spinner(
+                "正在比較不同 ULD 尺寸、可用裝載模式、"
+                "貨物旋轉與 B-M contour..."
+            ):
+                loads, remaining = plan_upper_deck_uld(
+                    units,
+                    selected_ulds,
+                    allow_center=allow_center_this_run,
+                )
+
+            st.session_state["b777_uld_loads"] = loads
+            st.session_state["b777_uld_remaining"] = remaining
+            st.session_state["result_aircraft"] = "B777"
+
+        loads = st.session_state.get("b777_uld_loads", [])
+        remaining = st.session_state.get("b777_uld_remaining", [])
+
+        if loads or remaining:
+            st.markdown("### B777 上艙整體盤位")
+
+            c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+            c1.metric("Loading Surface 數", len(loads))
+            c2.metric("實際使用 ULD 數", total_uld_units_used(loads))
+            c3.metric(
+                "118盤位",
+                f"{total_118_positions_used(loads)}/22",
+            )
+            c4.metric(
+                "114專用位置",
+                f"{total_114_positions_used(loads)}/4",
+            )
+            c5.metric(
+                "尾端96",
+                f"{total_96_tail_positions_used(loads)}/1",
+            )
+            c6.metric("成功裝入", total_pieces_loaded(loads))
+            c7.metric("未裝入", len(remaining))
+
+            st.caption(
+                "Loading Surface 是一次裝載組合；實際 ULD 數會依組合計算。"
+                "例如中央裝載 1 個 Loading Surface = 2 個同尺寸 ULD。"
+                "PGA 單側會占 2 個 118 盤位；PGA 中央會占 4 個。"
+            )
+
+            st.plotly_chart(
+                make_position_plan_figure(loads),
+                use_container_width=True,
+                key="b777_uld_position_plan",
+            )
+
+            if loads:
+                summary_rows = []
+
+                for load in loads:
+                    max_l, used_w, max_h = load_extents(load)
+                    total_weight = sum(
+                        p.weight
+                        for p in load.placements
+                    )
+
+                    summary_rows.append(
+                        {
+                            "Load ID": load.load_id,
+                            "ULD": load.spec.uld_id,
+                            "ULD名稱": load.spec.uld_name,
+                            "BUP ID": load.bup_group or "-",
+                            "Surface": (
+                                "中央裝載"
+                                if load.spec.loading_mode == "CENTER"
+                                else (
+                                    (
+                                        "114專用位置"
+                                        if load.spec.position_family == "114_SPECIAL"
+                                        else "尾端96專用位置"
+                                    )
+                                    if load.spec.position_family in {"114_SPECIAL", "96_TAIL"}
+                                    else f"{load.side}側"
+                                )
+                            ),
+                            "盤位家族": (
+                                (
+                                    "114專用"
+                                    if load.spec.position_family == "114_SPECIAL"
+                                    else "96尾端專用"
+                                )
+                                if load.spec.position_family in {"114_SPECIAL", "96_TAIL"}
+                                else "118等效"
+                            ),
+                            "118等效盤位數": (
+                                len(load.occupied_positions)
+                                if load.spec.position_family == "118_EQUIV"
+                                else 0
+                            ),
+                            "需要同尺寸ULD數": load.spec.uld_units_required,
+                            "中央裝載盤位數": (
+                                load.spec.positions_used
+                                if load.spec.loading_mode == "CENTER"
+                                else "-"
+                            ),
+                            "Bay": "-".join(load.bays),
+                            "占用盤位": ",".join(load.occupied_positions),
+                            "貨物數": len(load.placements),
+                            "總重量(kg)": round(total_weight, 2),
+                            "Surface長(cm)": round(load.spec.base_length, 2),
+                            "Surface寬(cm)": round(load.spec.surface_width, 2),
+                            "設定最大高(cm)": round(load.spec.nominal_height, 2),
+                            "目前貨物最大長(cm)": round(max_l, 2),
+                            "目前貨物最大寬(cm)": round(used_w, 2),
+                            "目前貨物最大高(cm)": round(max_h, 2),
+                        }
+                    )
+
+                st.dataframe(
+                    pd.DataFrame(summary_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.markdown("### 3D 貨物裝載圖")
+
+                load_map = {
+                    (
+                        f"{load.load_id}｜{load.spec.uld_id}｜"
+                        f"{'-'.join(load.bays)}｜{len(load.placements)}件"
+                    ): load
+                    for load in loads
+                }
+
+                selected_load_label = st.selectbox(
+                    "選擇要查看的 ULD / Loading Surface",
+                    list(load_map.keys()),
+                    key="b777_3d_load_selector",
+                )
+
+                selected_load = load_map[selected_load_label]
+
+                st.markdown("#### 貨物剖面圖")
+
+                st.caption(
+                    "這張剖面圖會把目前 ULD 內的『實際貨物矩形』畫在 B-M 輪廓中。"
+                    "使用 X 滑桿可以沿飛機前後方向切換剖面；"
+                    "只有被該 X 平面切到的貨物會顯示。"
+                )
+
+                slice_max = max(
+                    [p.x + p.l for p in selected_load.placements],
+                    default=selected_load.spec.base_length,
+                )
+                slice_max = max(float(slice_max), 1.0)
+
+                slice_x = st.slider(
+                    "剖面 X 位置 (cm)",
+                    min_value=0.0,
+                    max_value=float(slice_max),
+                    value=float(slice_max) / 2.0,
+                    step=max(float(slice_max) / 100.0, 1.0),
+                    key=f"b777_slice_{selected_load.load_id}",
+                )
+
+                st.plotly_chart(
+                    make_load_cross_section_figure(
+                        selected_load,
+                        slice_x,
+                    ),
+                    use_container_width=True,
+                    key=f"b777_cross_section_{selected_load.load_id}_{slice_x:.2f}",
+                )
+
+                st.markdown("#### 3D 貨物裝載圖")
+
+                st.plotly_chart(
+                    make_load_3d_figure(selected_load),
+                    use_container_width=True,
+                    key=f"b777_3d_{selected_load.load_id}",
+                )
+
+                current_max_l, current_max_w, current_max_h = load_extents(
+                    selected_load
+                )
+
+                # 與 A333 相同：三個尺寸指標緊密排列在 3D 圖下方。
+                mx, my, mz, metric_spacer = st.columns(
+                    [0.72, 0.72, 0.72, 7.84],
+                    gap="small",
+                )
+                mx.metric("目前貨物最大 長", f"{current_max_l:.2f}")
+                my.metric("目前貨物最大 寬", f"{current_max_w:.2f}")
+                mz.metric("目前貨物最大 高", f"{current_max_h:.2f}")
+
+                st.caption(
+                    "最大值以貨物外緣計算："
+                    "長=max(X+L)、"
+                    "寬=貨物實際橫向最左至最右外緣範圍、"
+                    "高=max(Z+H)。"
+                    f" ULD/Surface上限："
+                    f"長={selected_load.spec.base_length:.2f}、"
+                    f"寬={selected_load.spec.surface_width:.2f}、"
+                    f"高={selected_load.spec.nominal_height:.2f} cm。"
+                )
+
+                placement_rows = []
+
+                for p in selected_load.placements:
+                    aircraft_y0, aircraft_y1 = local_to_aircraft_y(
+                        selected_load.spec,
+                        p,
+                        side=selected_load.side,
+                    )
+
+                    placement_rows.append(
+                        {
+                            "貨物ID": p.item_id,
+                            "名稱": p.name,
+                            "X": round(p.x, 2),
+                            "Local Y": round(p.y, 2),
+                            "Aircraft Y起": round(aircraft_y0, 2),
+                            "Aircraft Y迄": round(aircraft_y1, 2),
+                            "Z": round(p.z, 2),
+                            "L": round(p.l, 2),
+                            "W": round(p.w, 2),
+                            "H": round(p.h, 2),
+                            "單件重量(kg)": round(p.weight, 2),
+                            "最外側半寬(cm)": round(p.outer_half_width, 2),
+                            "該位置Contour限制高(cm)": round(p.contour_limit_height, 2),
+                            "貨物頂高(cm)": round(p.z + p.h, 2),
+                            "RX": p.rotation[0],
+                            "RY": p.rotation[1],
+                            "RZ": p.rotation[2],
+                            "不能疊": p.cannot_crush,
+                        }
+                    )
+
+                st.dataframe(
+                    pd.DataFrame(placement_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            if remaining:
+                st.error(
+                    f"尚有 {len(remaining)} 件貨物無法放入目前 B-M 可用 ULD / 盤位。"
+                )
+
+                remaining_df = pd.DataFrame(
+                    [
+                        {
+                            "貨物ID": unit.item_id,
+                            "名稱": unit.name,
+                            "原始尺寸": f"{unit.l}×{unit.w}×{unit.h}",
+                            "單件重量(kg)": round(unit.weight, 2),
+                        }
+                        for unit in remaining
+                    ]
+                )
+
+                st.dataframe(
+                    remaining_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.warning(
+            "B777 v1.5 仍屬 B-M 上艙工程測試："
+            "目前已計算 ULD 基底尺寸與 aircraft contour，"
+            "但尚未加入後上艙、下腹艙、正式 position max weight、"
+            "floor loading、CG、door clearance 等航空作業限制。"
+        )
+
+    # ---------------------------------------------------------
+    # A333 existing generic ULD packing
+    # ---------------------------------------------------------
+    else:
+        all_boxes = load_boxes()
+        compatible_boxes = get_compatible_ulds(
+            all_boxes,
+            profile.code,
+            enabled_only=True,
+        )
+
+        if not compatible_boxes:
+            st.error(
+                f"{profile.code} 目前沒有可使用的 ULD。"
+                "請先至「ULD／箱子管理」設定適用機型。"
+            )
+            st.stop()
+
+        st.success(
+            f"已依 {profile.code} 自動載入 {len(compatible_boxes)} 種可用 ULD。"
+        )
+
+        box_options = {
+            (
+                f"{b['box_id']}｜{b['name']}｜"
+                f"{b['l']}×{b['w']}×{b['h']} cm｜"
+                f"載重 {b['max_weight']} kg"
+            ): b
+            for b in compatible_boxes
+        }
+
+        selected_labels = st.multiselect(
+            "本次可使用 ULD",
+            list(box_options.keys()),
+            default=list(box_options.keys()),
+        )
+
+        mode = st.radio(
+            "計算模式",
+            [
+                "混合 ULD：系統自動判斷 ULD 組合",
+                "單一 ULD：逐一比較每種 ULD 需要幾個",
+            ],
+            horizontal=True,
+        )
+
+        if st.button("🚀 計算", type="primary", use_container_width=True):
+            if not selected_labels:
+                st.error("請至少選擇一種 ULD。")
+                st.stop()
+
+            selected_boxes = [
+                BoxType(
+                    b["box_id"],
+                    b["name"],
+                    float(b["l"]),
+                    float(b["w"]),
+                    float(b["h"]),
+                    float(b["max_weight"]),
+                )
+                for b in [box_options[label] for label in selected_labels]
+            ]
+
+            aircraft_errors = aircraft_module.validate_loading(
+                items=items,
+                units=units,
+                ulds=[box_options[label] for label in selected_labels],
+            )
+
+            if aircraft_errors:
+                st.error(f"{profile.code} 機型規則檢查未通過：")
+                for error in aircraft_errors:
+                    st.write(f"- {error}")
+                st.stop()
+
+            st.write(f"輸入貨物總量：**{len(units)} 件**")
+
+            if mode.startswith("混合 ULD"):
+                with st.spinner("正在依貨量搜尋 ULD 組合..."):
+                    packed_boxes, remaining = pack_using_mixed_box_types(
+                        selected_boxes,
+                        units,
+                    )
+
+                st.session_state["mode"] = "mixed"
+                st.session_state["result"] = [(packed_boxes, remaining)]
+                st.session_state["result_aircraft"] = profile.code
+
+            else:
+                results = []
+
+                with st.spinner("正在逐一比較各 ULD..."):
+                    for box_type in selected_boxes:
+                        packed_boxes, remaining = pack_using_single_box_type(
+                            box_type,
+                            units,
+                        )
+                        results.append((box_type, packed_boxes, remaining))
+
+                st.session_state["mode"] = "single"
+                st.session_state["result"] = results
+                st.session_state["result_aircraft"] = profile.code
+
+        if (
+            st.session_state.get("result_aircraft")
+            and st.session_state.get("result_aircraft") != profile.code
+        ):
+            invalidate_packing_result()
+
+        if st.session_state.get("mode") == "mixed":
+            packed_boxes, remaining = st.session_state["result"][0]
+            st.markdown("### 混合 ULD 建議")
+            display_packing_result(packed_boxes, remaining)
+
+        elif st.session_state.get("mode") == "single":
+            st.markdown("### 各 ULD 比較")
+
+            compare_rows = []
+
+            for box_type, packed_boxes, remaining in st.session_state["result"]:
+                total_box_volume = sum(
+                    b.box_type.l * b.box_type.w * b.box_type.h
+                    for b in packed_boxes
+                )
+
+                used_volume = sum(
+                    p.l * p.w * p.h
+                    for b in packed_boxes
+                    for p in b.placements
+                )
+
+                utilization = (
+                    used_volume / total_box_volume * 100
+                    if total_box_volume
+                    else 0
+                )
+
+                compare_rows.append(
+                    {
+                        "ULD ID": box_type.box_id,
+                        "ULD 名稱": box_type.name,
+                        "需要 ULD 數": (
+                            len(packed_boxes)
+                            if not remaining
+                            else "無法完整裝入"
+                        ),
+                        "未裝入件數": len(remaining),
+                        "整體利用率": f"{utilization:.1f}%",
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(compare_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            options = [
+                f"{box_type.box_id}｜{box_type.name}"
+                for box_type, _, _ in st.session_state["result"]
+            ]
+
+            selected_detail = st.selectbox("查看某一 ULD 詳細排列", options)
+            selected_index = options.index(selected_detail)
+
+            box_type, packed_boxes, remaining = st.session_state["result"][selected_index]
+            display_packing_result(packed_boxes, remaining)
