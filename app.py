@@ -64,7 +64,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.9", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.9.1", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1239,7 +1239,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.9")
+st.title("✈️ 3D貨物排列系統 v1.13.9.1")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )

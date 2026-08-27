@@ -1,5 +1,5 @@
 """
-快速尺寸文字轉換器。
+快速尺寸文字轉換器 — v1.13.9.1
 
 支援：
 121*102*147*1
@@ -12,10 +12,12 @@
 固定解讀：
 長 × 寬 × 高 × 數量
 
-v1.13.9：
-- ID 不再當作「前綴」自動加流水號。
-- 使用者輸入 ID=A，該次轉換所有尺寸列的 ID 都是 A。
-- 多次匯入不同 ID 時，由 app.py 將資料往下累加。
+相容性：
+- v1.13.9 新版呼叫：cargo_id="09673823"
+- v1.13.8 舊版呼叫：id_prefix="09673823"
+
+不論使用哪個參數名稱，都會視為「固定 ID」，
+不再自動附加 001、002 流水號。
 """
 
 from __future__ import annotations
@@ -27,7 +29,6 @@ SEPARATOR_RE = re.compile(r"[\*xX×]")
 
 
 def _clean_number(value: float):
-    """整數維持整數顯示，否則保留小數。"""
     if float(value).is_integer():
         return int(value)
     return float(value)
@@ -38,17 +39,25 @@ def parse_dimension_text(
     cargo_id: str = "A",
     name_prefix: str = "貨物",
     agt: str = "",
+    id_prefix: str | None = None,
+    **_ignored,
 ):
     """
-    回傳：
-      rows: 可直接轉成目前程式 ITEM_COLUMNS 的 dict list
-      errors: [{行號, 原始內容, 錯誤}, ...]
+    將尺寸文字轉為目前程式可讀的貨物列。
 
-    同一次轉換的所有 rows 使用完全相同的 cargo_id。
-    空白行自動略過。
+    cargo_id:
+        v1.13.9 起正式參數名稱，該次所有尺寸列使用同一 ID。
+
+    id_prefix:
+        僅為向下相容舊版 app.py；若有傳入，會直接當固定 ID 使用，
+        不會再自行產生流水號。
     """
     rows = []
     errors = []
+
+    # 若舊版 app 還傳 id_prefix，優先採用它。
+    if id_prefix is not None and str(id_prefix).strip():
+        cargo_id = id_prefix
 
     cargo_id = str(cargo_id or "A").strip() or "A"
     name_prefix = str(name_prefix or "貨物").strip() or "貨物"
@@ -63,7 +72,6 @@ def parse_dimension_text(
         if not original:
             continue
 
-        # *, x, X, × 全部轉成空白。
         normalized = SEPARATOR_RE.sub(" ", original)
         parts = normalized.split()
 
