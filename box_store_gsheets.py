@@ -1,14 +1,17 @@
 """
-Google Sheets ULD / 箱型資料存取 adapter — v1.13.3.
+Google Sheets ULD / 箱型資料存取 adapter — v1.13.4.
 
 修正重點：
 1. Google Sheet 若缺少 allow_center_load，讀取時自動建立欄位。
-2. 儲存 ULD 時會把完整 canonical schema 寫回 boxes worksheet。
-3. 儲存後立即回讀驗證，確認 allow_center_load 等欄位真的已同步。
+2. 儲存 ULD 時寫入完整 canonical schema。
+3. 每次 update 後主動清除 Streamlit data cache。
+4. 回讀驗證加入短暫 retry，避免 Google Sheets 更新完成但本次 read
+   仍拿到舊快取，造成「其實已寫入、卻顯示同步失敗」。
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pandas as pd
@@ -53,6 +56,16 @@ class GoogleSheetsBoxStore:
             type=GSheetsConnection,
         )
 
+    def _clear_read_cache(self) -> None:
+        """
+        st-gsheets-connection 的 read() 使用 Streamlit cache_data。
+        官方 update 範例在寫入後也會 clear cache 再 rerun。
+        """
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+
     def _read_dataframe(self) -> pd.DataFrame:
         df = self.conn.read(
             spreadsheet=self.spreadsheet,
@@ -78,6 +91,7 @@ class GoogleSheetsBoxStore:
                 worksheet=self.worksheet,
                 data=df,
             )
+            self._clear_read_cache()
 
         return df
 
@@ -99,11 +113,87 @@ class GoogleSheetsBoxStore:
 
         return records
 
+    def _normalized_rows_by_id(
+        self,
+        df: pd.DataFrame,
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+
+        if df is None or df.empty:
+            return result
+
+        for raw in df.to_dict("records"):
+            clean = {
+                key: (None if pd.isna(value) else value)
+                for key, value in raw.items()
+            }
+            normalized = normalize_box(clean)
+            result[str(normalized["box_id"]).strip()] = normalized
+
+        return result
+
+    def _verify_saved_records(
+        self,
+        verify: pd.DataFrame,
+        expected_records: list[dict[str, Any]],
+    ) -> tuple[bool, str]:
+        missing_columns = [
+            col
+            for col in CANONICAL_COLUMNS
+            if col not in verify.columns
+        ]
+
+        if missing_columns:
+            return (
+                False,
+                "Google Sheets 缺少欄位："
+                + ", ".join(missing_columns),
+            )
+
+        expected_by_id = {
+            str(r["box_id"]).strip(): r
+            for r in expected_records
+        }
+        actual_by_id = self._normalized_rows_by_id(verify)
+
+        for box_id, expected in expected_by_id.items():
+            if box_id not in actual_by_id:
+                return False, f"找不到 ULD {box_id}"
+
+            actual = actual_by_id[box_id]
+
+            if bool(actual.get("allow_center_load", False)) != bool(
+                expected.get("allow_center_load", False)
+            ):
+                return (
+                    False,
+                    f"{box_id} 的 allow_center_load 尚未反映最新值",
+                )
+
+            if int(actual.get("center_positions", 2) or 2) != int(
+                expected.get("center_positions", 2) or 2
+            ):
+                return (
+                    False,
+                    f"{box_id} 的 center_positions 尚未反映最新值",
+                )
+
+            if bool(actual.get("enabled", True)) != bool(
+                expected.get("enabled", True)
+            ):
+                return (
+                    False,
+                    f"{box_id} 的 enabled 尚未反映最新值",
+                )
+
+        return True, ""
+
     def save_boxes(self, boxes: list[dict[str, Any]]) -> None:
         records = []
 
         for raw in boxes:
             item = normalize_box(raw).copy()
+
             item["compatible_aircraft"] = ",".join(
                 item.get("compatible_aircraft", [])
             )
@@ -119,65 +209,57 @@ class GoogleSheetsBoxStore:
             item["enabled"] = bool(
                 item.get("enabled", True)
             )
+
             records.append(item)
 
-        df = pd.DataFrame(records, columns=CANONICAL_COLUMNS)
+        df = pd.DataFrame(
+            records,
+            columns=CANONICAL_COLUMNS,
+        )
 
-        self.conn.update(
+        # update() 本身若 Google API 寫入失敗會直接 raise。
+        updated = self.conn.update(
             spreadsheet=self.spreadsheet,
             worksheet=self.worksheet,
             data=df,
         )
 
-        verify = self._read_dataframe()
-
-        missing_columns = [
-            col for col in CANONICAL_COLUMNS
-            if col not in verify.columns
-        ]
-        if missing_columns:
+        if updated is None:
             raise RuntimeError(
-                "Google Sheets 已回應更新，但缺少欄位："
-                + ", ".join(missing_columns)
+                "Google Sheets update() 未回傳資料，請確認 Service Account 寫入權限。"
             )
 
-        expected_by_id = {
-            str(r["box_id"]).strip(): r
-            for r in records
-        }
-        actual_by_id = {}
+        # 重要：清掉 read() 舊快取。
+        self._clear_read_cache()
 
-        for raw in verify.to_dict("records"):
-            clean = {
-                key: (None if pd.isna(value) else value)
-                for key, value in raw.items()
-            }
-            normalized = normalize_box(clean)
-            actual_by_id[str(normalized["box_id"]).strip()] = normalized
+        # Google API / cache 可能在非常短的時間內仍讀到舊值。
+        # 最多重試 4 次，總等待約 2.4 秒。
+        delays = (0.0, 0.4, 0.8, 1.2)
+        last_reason = ""
 
-        for box_id, expected in expected_by_id.items():
-            if box_id not in actual_by_id:
-                raise RuntimeError(
-                    f"Google Sheets 回讀驗證失敗：找不到 ULD {box_id}"
-                )
+        for delay in delays:
+            if delay:
+                time.sleep(delay)
 
-            actual = actual_by_id[box_id]
+            self._clear_read_cache()
+            verify = self._read_dataframe()
 
-            if bool(actual.get("allow_center_load", False)) != bool(
-                expected.get("allow_center_load", False)
-            ):
-                raise RuntimeError(
-                    f"Google Sheets 回讀驗證失敗："
-                    f"{box_id} 的 allow_center_load 未正確同步"
-                )
+            ok, reason = self._verify_saved_records(
+                verify,
+                records,
+            )
 
-            if int(actual.get("center_positions", 2) or 2) != int(
-                expected.get("center_positions", 2) or 2
-            ):
-                raise RuntimeError(
-                    f"Google Sheets 回讀驗證失敗："
-                    f"{box_id} 的 center_positions 未正確同步"
-                )
+            if ok:
+                return
+
+            last_reason = reason
+
+        raise RuntimeError(
+            "Google Sheets 寫入後回讀驗證仍未取得最新資料："
+            + last_reason
+            + "。請重新整理一次頁面；若 Google Sheet 已更新，"
+              "代表先前是讀取快取延遲。"
+        )
 
     def connection_info(self) -> dict[str, str]:
         return {
@@ -188,20 +270,21 @@ class GoogleSheetsBoxStore:
 
     def healthcheck(self) -> tuple[bool, str]:
         try:
+            self._clear_read_cache()
             df = self._read_dataframe()
             columns = list(df.columns)
+
             allow_center_status = (
                 "已存在"
                 if "allow_center_load" in columns
                 else "尚未建立（開啟 ULD 管理頁會自動建立）"
             )
-            rows = len(df.index)
 
             return (
                 True,
                 "Google Sheets 連線正常"
                 f"｜worksheet={self.worksheet}"
-                f"｜目前 {rows} 筆 ULD"
+                f"｜目前 {len(df.index)} 筆 ULD"
                 f"｜allow_center_load：{allow_center_status}",
             )
         except Exception as exc:

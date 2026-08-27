@@ -1,4 +1,51 @@
-# 3D 貨物排列系統 v1.13.2 — Google Sheets 可上線版
+# 3D 貨物排列系統 v1.13.4 — Google Sheets 快取同步修正版
+
+
+
+## v1.13.4 Google Sheets 快取修正
+
+v1.13.3 寫入後立刻使用 `conn.read()` 回讀驗證。
+
+`st-gsheets-connection` 的 `read()` 使用 Streamlit `cache_data`，
+因此可能發生：
+
+```text
+Google Sheet 實際已更新
+↓
+程式立即回讀
+↓
+讀到 update 前的舊快取
+↓
+誤判 118 allow_center_load 未同步
+```
+
+v1.13.4 改成：
+
+```text
+conn.update()
+↓
+st.cache_data.clear()
+↓
+重新讀取
+↓
+必要時短暫重試
+↓
+確認 allow_center_load / center_positions / enabled
+```
+
+因此不會因舊快取造成假失敗訊息。
+
+## v1.13.3 Google Sheets 儲存修正
+
+96 尺寸修正為 `317 × 243 × 243 cm`。
+
+上一版「儲存 ULD 資料」沒有同步的主因，是 96 被程式驗證成高度必須為 234 cm。
+只要表格中的 96 是 243 cm，整份 ULD 驗證就會失敗，因此 `save_boxes()` 根本不會執行。
+「補入缺少的預設 ULD」走的是直接寫入流程，所以仍可成功。
+
+Google Sheet 現在會使用 `allow_center_load` 欄位保存「可中央裝載」。
+舊 Sheet 若缺少該欄，程式會自動建立並預設 FALSE。
+勾選後按「儲存 ULD 資料」，TRUE/FALSE 會寫回 Google Sheets，下次直接讀回。
 
 ## v1.13.2 Google Sheets 可上線版
 
@@ -135,7 +182,7 @@ B777 上艙盤位圖改成與實際 Loading Sheet 類似的橫向閱讀方式：
 ```text
 L = 317 cm
 W = 243 cm
-H = 234 cm
+H = 243 cm
 ```
 
 位置：
@@ -152,7 +199,7 @@ H = 234 cm
 - 96 不能放到一般 118 等效盤位。
 - 不使用一般「本次中央裝載」開關。
 - `allow_center_load` 保持 `false`。
-- 原 `boxes.json` 的 96 高度已由 243 cm 修正為 234 cm。
+- 96 尺寸目前確認為 317×243×243 cm。
 
 ## v1.10 B777 上艙盤位規則
 
@@ -370,7 +417,7 @@ A001-005
 | 64 | PMC | 318 | 244 | 160 | 6800 | A333 | A333_GENERIC | 2 |
 | PLA | PLA | 318 | 153 | 160 | 3175 | A333 | A333_GENERIC | 2 |
 | 118 | 118 | 310 | 236 | 300 | 5000 | B777 | B777_UPPER_BM | 2 |
-| 96 | 96 | 317 | 243 | 234 | 5000 | B777 | B777_UPPER_BM | 2 |
+| 96 | 96 | 317 | 243 | 243 | 5000 | B777 | B777_UPPER_BM | 2 |
 | PGA | PGA | 606 | 244 | 300 | 13680 | B777 | B777_UPPER_BM | 4 |
 | AKE | AKE | 156 | 153 | 160 | 1588 | A333 | A333_GENERIC | 2 |
 | PMC | PMC | 318 | 244 | 160 | 6800 | B777 | B777_UPPER_BM | 2 |

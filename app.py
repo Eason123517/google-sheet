@@ -62,7 +62,7 @@ from b777_uld_rules import (
 
 APP_DIR = Path(__file__).resolve().parent
 
-st.set_page_config(page_title="3D貨物排列系統v1.13.3", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="3D貨物排列系統v1.13.4", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================================
 # Data models
@@ -1196,7 +1196,7 @@ def validate_item_data_for_packing(df):
 # =========================================================
 # App UI
 # =========================================================
-st.title("✈️ 3D貨物排列系統 v1.13.3")
+st.title("✈️ 3D貨物排列系統 v1.13.4")
 st.caption(
     "可上線版：ULD／貨箱資料改由 Google Sheets 即時讀寫；保留目前 A333、B777、BUP 與盤位規則。"
 )
@@ -1473,7 +1473,7 @@ elif page == "🧰 ULD／箱子管理":
     if st.session_state.pop("uld_save_success", False):
         st.success(
             "ULD 資料已同步儲存至 Google Sheets，"
-            "包含「可中央裝載」設定。"
+            "並已重新讀取確認「可中央裝載」等設定。"
         )
     st.write(
         "此頁直接管理 Google Sheets 的 ULD／貨箱資料。"
