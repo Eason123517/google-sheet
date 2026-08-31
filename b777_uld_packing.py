@@ -7,7 +7,7 @@ B777 B-M upper-deck contour-aware ULD packing engine.
 - 每一件貨物都可以在 ULD 表面內移動 X / Y / Z。
 - 每個候選 Y 位置都換算成飛機橫向位置，再依 B-M contour 檢查該處可用高度。
 - 單側表面：中心線 -> 機身外側。
-- 中央表面：跨越左右兩側；貨物可以在整個雙盤寬度內自由偏左 / 偏右 / 置中。
+- 中央裝載：ULD 本身長、寬維持原尺寸，只把 ULD 橫向中心對準飛機中心線；貨物高度依實際橫向位置套用 contour。
 
 目前仍是 heuristic 3D packing，不是數學上的全域最佳解。
 """
@@ -89,9 +89,11 @@ def build_surface_specs(
         SIDE   = 2 個連續 118 等效盤位
         CENTER = 4 個 118 等效盤位（左右各 2）
 
-    - 118 / 96 / PMC 等一般上艙 ULD：
-        SIDE   = 1 個 118 等效盤位
-        CENTER = 依 center_positions；中央仍使用 2 個同尺寸 ULD
+    - 118 / PMC 等一般上艙 ULD：
+        SIDE   = 依原 ULD 長寬建立 surface
+        CENTER = 仍依 center_positions 占用盤位，但 packing surface 的
+                 長、寬維持該 ULD 原始尺寸，不再將寬度乘以 2。
+                 高度仍依貨物在飛機橫向位置的 contour 計算。
 
     - 114：
         只建立 114_SPECIAL 單一專用位置 surface
@@ -242,7 +244,9 @@ def build_surface_specs(
                     uld_units_required=2,
                     base_length=length,
                     half_width=half_width,
-                    surface_width=half_width * 2.0,
+                    # 中央裝載只改變「放在飛機中央」與盤位占用方式，
+                    # 不把兩個盤位合成雙倍寬的 packing surface。
+                    surface_width=width,
                     nominal_height=nominal_height,
                     max_weight=max_weight * 2.0,
                 )
@@ -285,14 +289,16 @@ def _local_to_global_y_edges(spec: SurfaceSpec, local_y: float, item_width: floa
       這裡先用右側正值幾何計算；左側最後用鏡射顯示。
 
     CENTER：
-      local y=0 是左側最外緣，
-      local y=half_width 是 centerline，
-      local y=2*half_width 是右側最外緣。
+      ULD 寬度維持原始 surface_width。
+      local y=0 是 ULD 左緣，
+      local y=surface_width/2 是 aircraft centerline，
+      local y=surface_width 是 ULD 右緣。
     """
     if spec.loading_mode == "SIDE":
         return local_y, local_y + item_width
 
-    y0 = local_y - spec.half_width
+    center_offset = spec.surface_width / 2.0
+    y0 = local_y - center_offset
     y1 = y0 + item_width
     return y0, y1
 
@@ -388,11 +394,11 @@ def _candidate_y_positions(space, spec: SurfaceSpec, item_width: float):
         # 單側優先靠中心線，但仍可因其他貨物而往外側移。
         values += [0.0]
     else:
-        center = spec.half_width
+        center = spec.surface_width / 2.0
         values += [
-            center - item_width / 2.0,  # 真正置中
-            center - item_width,        # 右緣貼中心線
-            center,                     # 左緣貼中心線
+            center - item_width / 2.0,  # 貨物真正置中
+            center - item_width,        # 貨物右緣貼飛機中心線
+            center,                     # 貨物左緣貼飛機中心線
         ]
 
     out = []
@@ -653,7 +659,7 @@ def local_to_aircraft_y(spec: SurfaceSpec, placement: ContourPlacement, side=Non
         return y0, y0 + placement.w
 
     if spec.loading_mode == "CENTER":
-        y0 = placement.y - spec.half_width
+        y0 = placement.y - spec.surface_width / 2.0
         return y0, y0 + placement.w
 
     if side == "L":

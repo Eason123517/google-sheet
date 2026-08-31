@@ -406,8 +406,8 @@ def make_load_3d_figure(load):
     # Loading base / ULD footprint.
     # -------------------------------------------------------
     if spec.loading_mode == "CENTER":
-        base_y0 = -spec.half_width
-        base_y1 = spec.half_width
+        base_y0 = -spec.surface_width / 2.0
+        base_y1 = spec.surface_width / 2.0
     elif load.side == "L":
         base_y0 = -spec.half_width
         base_y1 = 0.0
@@ -571,9 +571,9 @@ def make_load_cross_section_figure(load, slice_x: float):
             else "機尾中間96專用位置"
         )
     elif spec.loading_mode == "CENTER":
-        base_y0 = -spec.half_width
-        base_y1 = spec.half_width
-        surface_label = "中央裝載（2 個同尺寸 ULD）"
+        base_y0 = -spec.surface_width / 2.0
+        base_y1 = spec.surface_width / 2.0
+        surface_label = "中央裝載（ULD維持原長寬）"
     elif load.side == "L":
         base_y0 = -spec.half_width
         base_y1 = 0.0
